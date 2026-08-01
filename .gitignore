@@ -1,0 +1,49 @@
+# Sistema operativo y editores
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Configuración local y secretos
+.env
+.env.*
+!.env.example
+*.local
+*.log
+
+# Dependencias, entornos y resultados de herramientas
+node_modules/
+.pnpm-store/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+dist/
+build/
+
+# Fotografías, modelos y artefactos locales
+*.[Aa][Rr][Ww]
+*.[Dd][Nn][Gg]
+*.[Nn][Ee][Ff]
+*.[Cc][Rr]2
+*.[Cc][Rr]3
+*.[Rr][Aa][Ff]
+*.[Oo][Rr][Ff]
+*.[Rr][Ww]2
+data/
+photos/
+raw/
+imports/
+exports/
+output/
+models/
+cache/
+temp/
+tmp/
