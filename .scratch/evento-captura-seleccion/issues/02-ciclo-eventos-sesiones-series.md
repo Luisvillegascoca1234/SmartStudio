@@ -4,16 +4,16 @@
 
 **Blocked by:** 01 — Recorrer el flujo mínimo con capturas simuladas.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] El operador puede reabrir un evento existente y continuar desde su último estado guardado.
-- [ ] Un evento admite nombre obligatorio, fecha y hora automáticas, ubicación opcional y notas opcionales.
-- [ ] Solo puede existir un evento operativo activo a la vez.
-- [ ] Cada sesión recibe un número consecutivo, hora y una etiqueta opcional.
-- [ ] Solo puede existir una sesión activa dentro del evento.
-- [ ] El operador inicia y cierra cada serie manualmente.
-- [ ] Una sesión puede contener varias series y las fotografías anteriores permanecen disponibles.
-- [ ] El operador puede cancelar una sesión sin borrar sus capturas.
-- [ ] El operador puede restaurar una sesión cancelada y recuperar todas sus series.
-- [ ] Un reinicio en cualquier transición recupera el último estado confirmado sin mezclar eventos, sesiones ni series.
-- [ ] Las verificaciones recorren desde la interfaz los ciclos normal, cancelado, restaurado e interrumpido.
+- [x] El operador puede reabrir un evento existente y continuar desde su último estado guardado.
+- [x] Un evento admite nombre obligatorio, fecha y hora automáticas, ubicación opcional y notas opcionales.
+- [x] Solo puede existir un evento operativo activo a la vez.
+- [x] Cada sesión recibe un número consecutivo, hora y una etiqueta opcional.
+- [x] Solo puede existir una sesión activa dentro del evento.
+- [x] El operador inicia y cierra cada serie manualmente.
+- [x] Una sesión puede contener varias series y las fotografías anteriores permanecen disponibles.
+- [x] El operador puede cancelar una sesión sin borrar sus capturas.
+- [x] El operador puede restaurar una sesión cancelada y recuperar todas sus series.
+- [x] Un reinicio en cualquier transición recupera el último estado confirmado sin mezclar eventos, sesiones ni series.
+- [x] Las verificaciones recorren desde la interfaz los ciclos normal, cancelado, restaurado e interrumpido.

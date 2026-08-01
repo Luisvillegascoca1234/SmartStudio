@@ -47,3 +47,8 @@ models/
 cache/
 temp/
 tmp/
+.smartstudio-data/
+
+# Resultados de pruebas de interfaz
+playwright-report/
+test-results/

@@ -1,0 +1,67 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import type { FastifyInstance } from "fastify"
+import type { Browser, BrowserContext, Page } from "@playwright/test"
+
+import { createSmartStudioServer } from "../../../src/server/app.js"
+import type { WorkflowState } from "../../../src/shared/workflow.js"
+
+export class TestApplication {
+  page!: Page
+  private server!: FastifyInstance
+  private context!: BrowserContext
+  private address = ""
+
+  private constructor(
+    private readonly browser: Browser,
+    private readonly dataDirectory: string,
+    private readonly options: { testFeatures?: boolean; path?: string },
+  ) {}
+
+  static async start(
+    browser: Browser,
+    temporaryPrefix: string,
+    options: { testFeatures?: boolean; path?: string } = {},
+  ): Promise<TestApplication> {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), temporaryPrefix))
+    const application = new TestApplication(browser, dataDirectory, options)
+    await application.open()
+    return application
+  }
+
+  async reopen(): Promise<void> {
+    await this.context.close()
+    await this.server.close()
+    await this.open()
+  }
+
+  async close(): Promise<void> {
+    await this.context.close().catch(() => undefined)
+    await this.server.close().catch(() => undefined)
+    await rm(this.dataDirectory, { recursive: true, force: true })
+  }
+
+  async state(): Promise<WorkflowState> {
+    return this.page.evaluate(async () => {
+      const response = await fetch("/api/state")
+      return response.json()
+    }) as Promise<WorkflowState>
+  }
+
+  async readDataFile(relativePath: string): Promise<Buffer> {
+    return readFile(path.join(this.dataDirectory, relativePath))
+  }
+
+  private async open(): Promise<void> {
+    this.server = await createSmartStudioServer({
+      dataDirectory: this.dataDirectory,
+      staticDirectory: path.resolve("dist/client"),
+      testFeatures: this.options.testFeatures,
+    })
+    this.address = await this.server.listen({ host: "127.0.0.1", port: 0 })
+    this.context = await this.browser.newContext()
+    this.page = await this.context.newPage()
+    await this.page.goto(`${this.address}${this.options.path ?? ""}`)
+  }
+}
