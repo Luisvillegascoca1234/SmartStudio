@@ -11,13 +11,16 @@ La aplicación futura será local y automatizará un flujo fotográfico para un 
 Seguir este orden:
 
 1. `grill-me`
-2. `grill-with-docs`
-3. `to-spec`
-4. `to-tickets`
-5. `implement`
-6. `code-review`
+2. `to-spec`
+3. `to-tickets`
+4. `implement`
+5. `code-review`
+
+Cuando termine `grill-me`, actualizar `CONTEXT.md` con términos y contexto estable confirmados antes de ejecutar `to-spec`. Crear o modificar un ADR solo si durante la conversación se resolvió una decisión arquitectónica real.
 
 No incorporar TDD como metodología global. Implementar incrementos pequeños y verificar su comportamiento después de cada cambio. Elegir la verificación según el riesgo: pruebas automatizadas, integración, imágenes de referencia, inspección visual, mediciones de rendimiento o comprobaciones con hardware real.
+
+No realizar QA dentro de la aplicación salvo que el usuario lo solicite explícitamente.
 
 No crear commits automáticamente. Solicitar autorización explícita del usuario antes de confirmar cambios.
 
@@ -47,6 +50,6 @@ El repositorio usa un único contexto de dominio. Ver `docs/agents/domain.md`.
 
 ## Skills locales
 
-Las Skills se encuentran en `.agents/skills/` y pertenecen solo a este proyecto. `grilling` y `domain-modeling` son dependencias internas de `grill-me` y `grill-with-docs`.
+Las Skills se encuentran en `.agents/skills/` y pertenecen solo a este proyecto. `grilling` es la dependencia interna de `grill-me`.
 
 La copia local de `implement` está adaptada deliberadamente para no invocar TDD y para no crear commits sin autorización. Al actualizar las Skills, conservar o reaplicar esa adaptación.

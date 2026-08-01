@@ -26,11 +26,12 @@ El proyecto está en preparación. Todavía no se han definido la arquitectura n
 ## Flujo de trabajo
 
 1. `grill-me`
-2. `grill-with-docs`
-3. `to-spec`
-4. `to-tickets`
-5. `implement`
-6. `code-review`
+2. `to-spec`
+3. `to-tickets`
+4. `implement`
+5. `code-review`
+
+Al terminar `grill-me`, el contexto y las decisiones confirmadas se reflejan en `CONTEXT.md` o en un ADR solamente cuando aporten información estable antes de ejecutar `to-spec`.
 
 El proyecto no adopta TDD como regla global. La implementación deberá verificarse después de cada incremento mediante las pruebas, comparaciones visuales, mediciones o comprobaciones de hardware que correspondan.
 

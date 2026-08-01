@@ -19,7 +19,21 @@ El contexto de trabajo contempla:
 7. Preparar imágenes para revisión, selección, entrega o impresión.
 8. Reducir el tiempo requerido por fotografía.
 
-Los detalles, excepciones y criterios de aceptación deberán resolverse mediante `grill-me` y `grill-with-docs` antes de convertirse en una especificación.
+Los detalles, excepciones y criterios de aceptación deberán resolverse mediante `grill-me` antes de convertirse en una especificación.
+
+## Flujo operativo confirmado
+
+- Solo puede existir una sesión operativa activa a la vez.
+- Una sesión puede contener varias series cortas de capturas.
+- El operador inicia y cierra cada serie manualmente.
+- Después de revisar una serie, el operador selecciona hasta tres fotografías y marca exactamente una como principal.
+- La aplicación puede recomendar candidatas y advertir problemas de calidad, pero nunca selecciona, descarta ni elimina automáticamente.
+- La fotografía principal alimenta los módulos posteriores de edición, aprobación y entrega.
+- Los originales se conservan sin modificaciones y todos los cambios operativos se guardan automáticamente.
+
+## Organización funcional
+
+SmartStudio será una sola aplicación local organizada por capacidades. El primer módulo especificado es **Evento, captura y selección**. Edición, QR, impresión, mensajes desde iPad y libro digital se tratarán posteriormente como capacidades separadas.
 
 ## Entorno objetivo conocido
 
@@ -46,6 +60,13 @@ La computadora de desarrollo secundaria utiliza Windows 10 Pro, Intel Core i7-10
 ## Vocabulario inicial
 
 - **Miniestudio:** instalación fotográfica temporal utilizada durante un evento.
+- **Evento:** contenedor operativo que agrupa configuración, sesiones, fotografías, respaldos y resultados de una boda o actividad.
+- **Sesión:** trabajo correspondiente a un grupo de invitados; recibe un número automático, hora y una etiqueta opcional.
+- **Serie:** conjunto corto de fotografías capturadas dentro de una sesión y cerrado manualmente por el operador para revisión.
+- **Fotografía principal:** fotografía seleccionada que representa la sesión y debe continuar al flujo de edición y aprobación.
+- **Fotografía alternativa:** una de hasta dos selecciones adicionales que puede procesarse o entregarse posteriormente.
+- **Operador:** persona que controla la aplicación, registra selecciones y confirma las acciones durante el evento.
+- **Captura simulada:** par RAW + JPEG incorporado desde una carpeta para reproducir el flujo sin conectar la cámara.
 - **Computadora objetivo:** laptop en la que operará principalmente la aplicación durante los eventos.
 - **Computadora de desarrollo secundaria:** computadora actual utilizada para desarrollo y pruebas que no dependan del hardware final.
 - **RAW:** archivo de imagen con los datos de captura sin el revelado final.

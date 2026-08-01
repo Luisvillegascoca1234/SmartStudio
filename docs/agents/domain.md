@@ -8,7 +8,7 @@ El repositorio utiliza un único contexto de dominio.
 - Leer únicamente los ADRs de `docs/adr/` relacionados con el área de trabajo.
 - Si alguno de esos documentos no existe, continuar sin proponer su creación preventiva.
 
-`grill-with-docs`, mediante `domain-modeling`, actualizará el contexto y creará ADRs cuando se resuelvan términos o decisiones reales.
+Después de `grill-me`, actualizar `CONTEXT.md` únicamente con términos y contexto estable confirmados. Crear ADRs solo cuando se haya resuelto una decisión arquitectónica real.
 
 ## Vocabulario
 
