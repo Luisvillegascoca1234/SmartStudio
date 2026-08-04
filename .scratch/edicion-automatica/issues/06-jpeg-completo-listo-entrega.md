@@ -2,7 +2,7 @@
 
 **What to build:** convertir una versión aprobada en un JPEG sRGB de resolución completa, validado y asociado con su original, para dejar una salida inequívoca preparada para los módulos posteriores.
 
-**Blocked by:** 03 — Revelar Sony ARW y autorizar la alternativa JPEG; 05 — Gestionar versiones, reprocesamiento y aprobación.
+**Blocked by:** 03 — Revelar Sony ARW/Canon CR2 y autorizar la alternativa JPEG; 05 — Gestionar versiones, reprocesamiento y aprobación.
 
 **Status:** completed
 

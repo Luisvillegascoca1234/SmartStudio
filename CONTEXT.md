@@ -45,12 +45,32 @@ SmartStudio será una sola aplicación local organizada por capacidades. El prim
 - El perfil inicial será **Natural de evento**, orientado a iluminación y fondo controlados, piel natural, recuperación moderada de luces y sombras y ausencia de apariencia HDR.
 - La corrección contempla exposición, balance de blancos, contraste, color, reducción moderada de ruido y nitidez.
 - El retoque de personas será conservador: suavizado de piel suave, corrección de ojos rojos, blanqueamiento dental moderado y mejora ligera de brillo y nitidez de ojos. No cambia facciones, cuerpo, tamaño o forma de ojos, color del iris ni dirección de la mirada.
-- No se realizan automáticamente reencuadre, reemplazo de fondo, eliminación de objetos, modificación de identidad ni edición generativa.
+- No se realizan automáticamente reencuadre, reemplazo arbitrario de fondo, modificación de identidad ni edición generativa. En fotografías del miniestudio puede completarse conservadoramente un fondo uniforme detectado con confianza, protegiendo personas y conservando el original cuando la máscara o el fondo sean inciertos.
 - El operador revisa una comparación antes/después y conserva la decisión final. Puede ajustar exposición, temperatura, intensidad de color y suavizado de piel, reprocesar, aprobar, revocar una aprobación o volver al original.
 - La aplicación mantiene una cola local que procesa una fotografía a la vez sin bloquear nuevas sesiones fotográficas. Los trabajos y parámetros se recuperan después de un reinicio; los resultados parciales no se consideran válidos.
 - La revisión usa una vista previa sRGB y, después de la aprobación, se genera un JPEG sRGB de resolución completa. Los resultados aprobados y sus datos se respaldan en el SSD cuando está disponible.
 - Una edición solo queda lista para entrega cuando el archivo completo es legible, está asociado con su original y tiene registrada su aprobación. El módulo no genera todavía QR, impresión ni otras salidas.
 - El objetivo es que al menos el 95 % de las vistas previas estén disponibles en 30 segundos o menos en la computadora objetivo. El primer recorrido funcional y sus mediciones se realizarán en la computadora de desarrollo secundaria antes de validar la laptop objetivo.
+
+## Estado de implementación confirmado
+
+- Ya funciona localmente el ciclo de eventos, sesiones fotográficas, series, capturas, revisión, selección de hasta tres fotografías y definición de una principal.
+- La captura simulada, la importación manual y la observación de una carpeta de Imaging Edge incorporan RAW y JPEG en cualquier orden, conservan los originales y permiten recuperar componentes pendientes.
+- La primera edición automática está implementada con cola persistente, procesamiento RAW local, autorización explícita para recurrir al JPEG, perfiles versionados, alternativas, comparación antes/después, ajustes acotados, aprobación, revocación y generación del JPEG sRGB completo.
+- El revelado RAW utiliza darktable como ruta principal y rawpy/LibRaw como respaldo. La corrección de lente, el análisis facial, el retoque conservador y la segmentación de personas funcionan localmente.
+- El perfil Natural de evento puede completar de forma determinista un fondo uniforme interrumpido cuando existe confianza suficiente; conserva a las personas y omite la operación cuando el fondo o la máscara son inciertos.
+- Los trabajos, versiones y aprobaciones se recuperan después de reiniciar. El respaldo al SSD conserva verificación de integridad y los fallos no bloquean la operación interna.
+- El 4 de agosto de 2026 se completó un recorrido manual integral en navegador sin errores ni advertencias de consola. La interfaz se comprobó también a 390 × 844 píxeles sin desbordamiento horizontal.
+- La verificación actual pasa comprobación de tipos, compilación de producción y 30 pruebas E2E, incluidas RAW ARW/CR2, cola y recuperación, versiones, JPEG completo, importación robusta, recepción desde carpeta Sony, retoque de retrato y completado de fondo.
+
+## Trabajo pendiente confirmado
+
+- Validar físicamente la Sony A7 IV por USB mediante Imaging Edge Remote en la laptop objetivo, incluyendo RAW + JPEG, conservación en tarjeta, desconexión, recuperación manual, respaldo y tiempos reales.
+- Completar la validación operativa para evento: atajos de teclado, registro técnico y métricas locales, recuperación ante cierres inesperados y prueba de capacidad equivalente a 150 sesiones fotográficas y 1.500 pares RAW + JPEG.
+- Medir el percentil 95 del tiempo de vista previa en la laptop objetivo y confirmar que cumple el objetivo de 30 segundos.
+- Ejecutar QA visual con fotografías reales autorizadas del miniestudio, especialmente tonos de piel, ropa clara y oscura, ojos, dientes, bordes de persona y completado de fondo.
+- Los módulos de QR y descarga, impresión, mensajes desde iPad y libro digital todavía no están especificados ni implementados.
+- La transferencia a otra computadora debe preservar el repositorio y su historial, pero no debe incorporar a Git fotografías, RAW, modelos, resultados, cachés ni secretos. Las instrucciones operativas de reanudación están en `docs/codex-handoff.md`.
 
 ## Entorno objetivo conocido
 

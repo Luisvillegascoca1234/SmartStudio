@@ -8,9 +8,11 @@ import lensfunpy
 
 def main():
     source, destination, maker, model, lens_model, focal, aperture = sys.argv[1:8]
-    image = cv2.imread(source, cv2.IMREAD_COLOR)
+    image = cv2.imread(source, cv2.IMREAD_UNCHANGED)
     if image is None:
         raise RuntimeError("No se pudo leer la imagen para corregir la lente.")
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise RuntimeError("La imagen revelada necesita tres canales para corregir la lente.")
     database = lensfunpy.Database()
     cameras = database.find_cameras(maker, model)
     lenses = database.find_lenses(cameras[0], None, lens_model) if cameras else []

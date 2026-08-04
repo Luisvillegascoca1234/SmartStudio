@@ -5,7 +5,7 @@ import sharp from "sharp"
 import { captureById, type Capture, type EditingJob, type EditingProfile, type WorkflowState } from "../shared/workflow.js"
 import { WorkflowStore } from "./workflow-store.js"
 import { RawDeveloper, RawDevelopmentError } from "./raw-developer.js"
-import { PortraitRetoucher, type PortraitResult } from "./portrait-retoucher.js"
+import { PortraitRetoucher, type PortraitFixture, type PortraitResult } from "./portrait-retoucher.js"
 
 const findJob = (state: WorkflowState, id: string): EditingJob | null =>
   state.editingJobs.find((job) => job.id === id) ?? null
@@ -29,9 +29,10 @@ export class EditingService {
     private readonly dataDirectory: string,
     private readonly controlledProcessingDelayMilliseconds = 0,
     private readonly assertCanFinish: () => Promise<void> = async () => undefined,
+    private readonly controlledPortraitFixture?: PortraitFixture,
   ) {
     this.rawDeveloper = new RawDeveloper(dataDirectory)
-    this.portraitRetoucher = new PortraitRetoucher()
+    this.portraitRetoucher = new PortraitRetoucher(path.join(dataDirectory, "models"))
   }
 
   async initialize(): Promise<void> {
@@ -351,6 +352,8 @@ export class EditingService {
     let temporaryPath: string | null = null
     let portraitResult: PortraitResult | null = null
     let lensCorrectionApplied = false
+    let processingRoute: "cpu" | "gpu" = "cpu"
+    let usedRawFallback = false
     try {
       if (this.controlledProcessingDelayMilliseconds > 0) {
         await this.delayUntilCancelled(jobId, Math.ceil(this.controlledProcessingDelayMilliseconds / 2))
@@ -393,6 +396,8 @@ export class EditingService {
         const rendered = await this.renderEditedImage(job, capture, temporaryPath, origin, true)
         portraitResult = rendered.portraitResult
         lensCorrectionApplied = rendered.lensCorrectionApplied
+        processingRoute = rendered.processingRoute
+        usedRawFallback = rendered.usedRawFallback
       } catch (error) {
         if (!(error instanceof RawDevelopmentError)) throw error
         await this.store.mutate((state) => {
@@ -450,7 +455,14 @@ export class EditingService {
         completed.currentVersionId = version.id
         completed.faceCount = portraitResult?.faces ?? 0
         completed.portraitWarnings = portraitResult?.warnings ?? []
+        completed.backdropCompletion = portraitResult?.backdrop ?? "omitted"
         completed.lensCorrectionApplied = lensCorrectionApplied
+        completed.metrics.processingRoute = processingRoute
+        completed.accelerationWarning = processingRoute === "gpu"
+          ? null
+          : usedRawFallback
+            ? "darktable no pudo usarse; la edición continuó mediante el respaldo rawpy por CPU."
+            : "Ruta CPU activa; la edición sigue disponible con menor rendimiento."
         completed.metrics.previewMilliseconds = Date.now() - new Date(completed.startedAt!).getTime()
       })
     } catch (error) {
@@ -480,6 +492,7 @@ export class EditingService {
       rm(previewPath, { force: true }),
       rm(`${previewPath}.tmp`, { force: true }),
       rm(`${previewPath}.tmp.raw.png`, { force: true }),
+      rm(`${previewPath}.tmp.raw.tif`, { force: true }),
       rm(`${previewPath}.tmp.styled.jpg`, { force: true }),
       rm(`${previewPath}.tmp.portrait.jpg`, { force: true }),
     ])
@@ -502,19 +515,23 @@ export class EditingService {
     destination: string,
     origin: "raw" | "jpeg",
     lightweight: boolean,
-  ): Promise<{ lensCorrectionApplied: boolean; portraitResult: PortraitResult }> {
+  ): Promise<{ lensCorrectionApplied: boolean; portraitResult: PortraitResult; processingRoute: "cpu" | "gpu"; usedRawFallback: boolean }> {
     if (!capture.jpegRelativePath) throw new Error("La fotografía necesita su JPEG asociado para generar la edición.")
     const jpegPath = path.join(this.dataDirectory, capture.jpegRelativePath)
-    const developedRawPath = `${destination}.raw.png`
+    const developedRawPath = `${destination}.raw.tif`
     const styledPath = `${destination}.styled.jpg`
     const portraitPath = `${destination}.portrait.jpg`
     let sourceImagePath = jpegPath
     let lensCorrectionApplied = false
+    let processingRoute: "cpu" | "gpu" = "cpu"
+    let usedRawFallback = false
     try {
       if (origin === "raw") {
         const rawResult = await this.rawDeveloper.develop(capture.rawRelativePath, jpegPath, developedRawPath)
         sourceImagePath = developedRawPath
         lensCorrectionApplied = rawResult.lensCorrectionApplied
+        processingRoute = rawResult.processingRoute
+        usedRawFallback = rawResult.method === "rawpy"
       }
       const temperature = job.adjustments.temperature
       await sharp(sourceImagePath)
@@ -538,12 +555,12 @@ export class EditingService {
         styledPath,
         portraitPath,
         job.adjustments.skinSmoothing,
-        capture.source === "simulated-folder" ? { kind: "single" } : undefined,
+        capture.source === "simulated-folder" ? this.controlledPortraitFixture ?? { kind: "single" } : undefined,
       )
       let output = sharp(portraitPath).rotate().toColourspace("srgb")
       if (lightweight) output = output.resize(960, 960, { fit: "inside", withoutEnlargement: true })
       await output.jpeg({ quality: lightweight ? 86 : 94, chromaSubsampling: "4:4:4" }).toFile(destination)
-      return { lensCorrectionApplied, portraitResult }
+      return { lensCorrectionApplied, portraitResult, processingRoute, usedRawFallback }
     } finally {
       await Promise.all([
         rm(developedRawPath, { force: true }),

@@ -63,7 +63,7 @@ La primera entrega funcional se desarrollará y medirá en la computadora de des
 43. Como operador, quiero blanqueamiento dental moderado, para reducir dominantes amarillas sin perder textura ni producir blanco puro.
 44. Como responsable del evento, quiero que la edición no altere facciones, cuerpo ni identidad, para conservar fidelidad fotográfica.
 45. Como operador, quiero que la app no reencuadre automáticamente, para conservar la composición elegida durante la captura.
-46. Como operador, quiero que la app no reemplace fondos ni elimine objetos, para mantener claro el alcance de la edición fotográfica.
+46. Como operador, quiero que la app complete únicamente el fondo uniforme del miniestudio cuando pueda detectarlo con confianza, para corregir bordes, pared o soportes visibles sin alterar personas ni convertir la edición en un reemplazo arbitrario.
 47. Como responsable del evento, quiero que el módulo no realice reconocimiento de identidad, para evitar una base de datos biométrica.
 48. Como operador, quiero comparar antes y después mediante vista dividida y alternancia inmediata, para evaluar claramente la edición.
 49. Como operador, quiero ampliar y desplazar la vista, para revisar rostro, textura y detalle.
@@ -120,7 +120,7 @@ La primera entrega funcional se desarrollará y medirá en la computadora de des
 - La edición contempla orientación, corrección de lente cuando exista información utilizable, exposición, balance de blancos, contraste, color, reducción moderada de ruido y nitidez.
 - El retoque facial se limita a suavizado de piel suave o medio, corrección suave de ojos rojos, blanqueamiento dental moderado y mejora ligera de brillo y nitidez de ojos.
 - El retoque no modifica facciones, cuerpo, identidad, color o geometría de ojos ni dirección de la mirada. La detección de rostro no identifica personas.
-- No existe reencuadre automático. Tampoco se reemplazan fondos, eliminan objetos ni realizan cambios generativos.
+- No existe reencuadre automático ni reemplazo arbitrario de fondos. El perfil puede completar de forma determinista un fondo uniforme del miniestudio a partir de sus regiones limpias, únicamente fuera de una máscara protegida de personas y cuando la confianza sea suficiente. No realiza cambios generativos.
 - Los ajustes manuales iniciales son exposición, temperatura, intensidad de color y nivel de suavizado de piel. Son acotados, no destructivos y pueden restablecerse a la edición automática.
 - La revisión ofrece antes/después, vista dividida, alternancia inmediata, ampliación y desplazamiento.
 - La primera salida es una vista previa sRGB ligera. La aprobación solicita después un JPEG sRGB de resolución completa con los mismos parámetros.
@@ -148,6 +148,7 @@ La primera entrega funcional se desarrollará y medirá en la computadora de des
 - Se verificará que nuevas sesiones fotográficas continúan mientras existe un trabajo de edición y que la cola conserva orden e idempotencia.
 - Se verificarán perfiles versionados, ajustes acotados, restablecimiento, reprocesamiento, aprobación, revocación y cambio de fotografía principal.
 - La calidad visual utilizará fotografías controladas que representen una persona, grupos, tonos de piel diversos, ropa clara y oscura, exposición moderadamente incorrecta y fondo controlado.
+- El completado de fondo se verifica con material controlado que contiene una interrupción del fondo y objetos de soporte; debe preservar la persona y omitir la operación cuando no exista un fondo uniforme o una máscara confiable.
 - Las fotografías privadas de eventos reales, modelos y resultados no se incorporarán a Git. Los fixtures versionados deberán ser controlados y contar con autorización adecuada.
 - La comparación visual de referencia y la inspección manual quedarán pendientes hasta que el usuario solicite explícitamente la etapa de QA correspondiente.
 - El rendimiento medirá por separado tiempo hasta vista previa, tiempo hasta JPEG completo, uso de CPU/GPU, errores y capacidad de continuar capturando.
@@ -163,7 +164,7 @@ La primera entrega funcional se desarrollará y medirá en la computadora de des
 - Libro digital y generación de PDF.
 - Reconocimiento o identificación de personas.
 - Modificación de facciones, cuerpo, identidad, color o forma de ojos.
-- Reemplazo de fondo, eliminación de objetos y edición generativa.
+- Reemplazo arbitrario del fondo, incorporación de escenas distintas, eliminación general de objetos y edición generativa. La única excepción es completar conservadoramente el fondo uniforme del miniestudio según la decisión de implementación anterior.
 - Reencuadre o recorte automático.
 - Curvas, máscaras manuales, edición por zonas, capas y un editor fotográfico avanzado.
 - Ojos artificialmente agrandados, cambio de dirección de mirada o blanqueamiento dental fuerte.

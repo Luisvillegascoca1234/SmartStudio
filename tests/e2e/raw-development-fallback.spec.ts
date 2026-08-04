@@ -1,4 +1,8 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { expect, test } from "@playwright/test"
+import sharp from "sharp"
 
 import { TestApplication } from "./support/test-application.js"
 
@@ -42,6 +46,37 @@ test("revela el RAW local y conserva la asociación de originales", async ({ bro
     expect(captureAfter.jpegSha256).toBe(captureBefore.jpegSha256)
   } finally {
     await application.close()
+  }
+})
+
+test("importa Canon CR2 y lo procesa mediante la ruta RAW local", async ({ browser }) => {
+  const application = await TestApplication.start(browser, "smartstudio-cr2-valid-", { testFeatures: true })
+  const fixtureDirectory = await mkdtemp(path.join(tmpdir(), "smartstudio-cr2-"))
+  try {
+    const rawPath = path.join(fixtureDirectory, "CANON_0001.CR2")
+    const jpegPath = path.join(fixtureDirectory, "CANON_0001.JPG")
+    await writeFile(rawPath, Buffer.from("SMARTSTUDIO_SIMULATED_RAW\0canon-cr2", "ascii"))
+    await sharp({ create: { width: 1200, height: 800, channels: 3, background: "#76584a" } }).jpeg().toFile(jpegPath)
+
+    await application.page.getByLabel("Nombre del evento").fill("Canon CR2")
+    await application.page.getByRole("button", { name: "Crear evento" }).click()
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
+    await application.page.getByRole("button", { name: "Iniciar serie" }).click()
+    await application.page.getByLabel("Archivos RAW y JPEG").setInputFiles([rawPath, jpegPath])
+    await application.page.getByRole("button", { name: "Importar archivos" }).click()
+    const captureCard = application.page.getByTestId("capture-CANON_0001")
+    await expect(captureCard.getByText("RAW + JPEG asociados", { exact: false })).toBeVisible()
+    await application.page.getByRole("button", { name: "Cerrar serie" }).click()
+    await captureCard.getByRole("button", { name: "Seleccionar", exact: true }).click()
+    await captureCard.getByRole("button", { name: "Marcar principal" }).click()
+    await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
+    await expect(application.page.getByTestId("editing-job-CANON_0001").getByText("Procesada desde RAW", { exact: true })).toBeVisible()
+    const state = await application.state()
+    expect(state.events[0].sessions[0].series[0].captures[0].rawRelativePath).toMatch(/\.CR2$/)
+    expect(state.editingJobs[0].origin).toBe("raw")
+  } finally {
+    await application.close()
+    await rm(fixtureDirectory, { recursive: true, force: true })
   }
 })
 

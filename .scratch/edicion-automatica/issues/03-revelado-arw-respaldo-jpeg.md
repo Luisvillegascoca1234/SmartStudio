@@ -16,4 +16,4 @@
 - [x] La ruta básica funciona mediante CPU para que la ausencia de aceleración no elimine la capacidad.
 - [x] Ambos orígenes producen versiones derivadas sin modificar los archivos originales.
 - [x] Las verificaciones cubren ARW válido, RAW pendiente, RAW corrupto, incompatibilidad, autorización JPEG y rechazo de la autorización.
-- [x] La importación reconoce CR2 y lo envía por la misma ruta local; la validación con un CR2 real queda pendiente hasta disponer del archivo de cámara.
+- [x] La importación reconoce CR2 y lo envía por la misma ruta local; se verificó el revelado de un CR2 real en la computadora de desarrollo secundaria mediante darktable 5.6.

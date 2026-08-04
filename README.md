@@ -4,14 +4,15 @@ Repositorio de una futura aplicación local para automatizar el flujo de trabajo
 
 ## Estado
 
-Ya funcionan localmente evento, captura, selección y la primera edición automática. La cola de edición es persistente y recuperable; revela RAW mediante LibRaw/rawpy y solicita autorización antes de recurrir al JPEG. La transferencia física desde cámara todavía requiere validación con el hardware real; no incluye QR, impresión ni mensajes desde iPad.
+Ya funcionan localmente evento, captura, selección y la primera edición automática. La cola de edición es persistente y recuperable; revela RAW principalmente mediante darktable, conserva rawpy/LibRaw como respaldo y solicita autorización antes de recurrir al JPEG. MediaPipe analiza landmarks, segmenta personas y permite completar conservadoramente un fondo uniforme del miniestudio sin relleno generativo. La transferencia física desde cámara todavía requiere validación con el hardware real; no incluye QR, impresión ni mensajes desde iPad.
 
 ## Entorno de desarrollo
 
 - Git con rama principal `main`.
 - Node.js `24.18.0` LTS, seleccionado mediante `fnm` y `.node-version`.
 - pnpm disponible mediante el entorno de Node/Corepack.
-- Python 3.11+ con rawpy/LibRaw, OpenCV y Lensfun para revelado y retoque local.
+- Python 3.11+ con rawpy/LibRaw como respaldo y MediaPipe/OpenCV para análisis y retoque local.
+- darktable 5.6+ para el revelado RAW principal de 16 bits mediante `darktable-cli`.
 - Docker y CUDA no son requisitos del proyecto en esta etapa.
 
 La interfaz usa React, Tailwind CSS 4 y componentes shadcn/ui almacenados localmente en `src/components/ui/`. La configuración se conserva en `components.json`; agregar un componente no introduce una dependencia de servicios en línea durante la ejecución.
@@ -21,8 +22,12 @@ La interfaz usa React, Tailwind CSS 4 y componentes shadcn/ui almacenados localm
 ```powershell
 pnpm install
 python -m pip install -r requirements-raw.txt
+winget install --id darktable.darktable --exact
+pnpm setup:vision
 pnpm dev
 ```
+
+Los modelos oficiales de MediaPipe se descargan con versión y hash verificados en `.smartstudio-data/models/`, fuera de Git. `SMARTSTUDIO_DATA_DIR` permite preparar y ejecutar la aplicación con otro directorio de datos. Si darktable no está instalado, el revelado conserva la ruta rawpy de respaldo; si falta un modelo, la aplicación omite las operaciones que dependan de él en vez de aplicar máscaras inciertas. El completado de fondo solo se activa cuando encuentra suficiente superficie uniforme en la propia fotografía y protege la silueta segmentada.
 
 La interfaz queda disponible en `http://localhost:5173`. Los datos de desarrollo se guardan en `.smartstudio-data/`, fuera de Git. Para comprobar tipos y compilación usa `pnpm check`; para la prueba integral usa `pnpm test:e2e`.
 
@@ -55,6 +60,7 @@ El proyecto no adopta TDD como regla global. La implementación deberá verifica
 - `docs/agents/`: configuración compartida por las Skills.
 - `docs/sony-a7iv-usb-validation.md`: mecanismo USB elegido y validación física pendiente.
 - `docs/editing-development-reference.md`: mediciones automatizadas de edición en esta computadora.
+- `docs/codex-handoff.md`: estado y pasos para reanudar el proyecto en otra computadora con Codex.
 - `docs/adr/`: decisiones arquitectónicas futuras, creadas solo cuando sean necesarias.
 - `.scratch/`: especificaciones y tickets locales creados por las Skills cuando comience la definición del proyecto.
 

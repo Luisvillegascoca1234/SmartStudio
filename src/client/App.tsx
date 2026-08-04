@@ -53,6 +53,14 @@ const formatDate = (value: string): string =>
   )
 
 const WORKFLOW_REFRESH_INTERVAL_MILLISECONDS = 750
+const CONNECTION_ERROR = "No se pudo conectar con el servidor local de SmartStudio."
+
+const actionErrorMessage = (caught: unknown): string => {
+  if (caught instanceof TypeError && caught.message.toLocaleLowerCase().includes("fetch")) {
+    return CONNECTION_ERROR
+  }
+  return caught instanceof Error ? caught.message : "No se pudo completar la acción."
+}
 
 export function App() {
   const [state, setState] = useState<WorkflowState | null>(null)
@@ -85,9 +93,9 @@ export function App() {
       .then(async (response) => (await response.json()) as WorkflowState)
       .then((nextState) => {
         setState(nextState)
-        setError((current) => current === "No se pudo conectar con el servidor local de SmartStudio." ? null : current)
+        setError((current) => current === CONNECTION_ERROR || current === "Failed to fetch" ? null : current)
       })
-      .catch(() => setError("No se pudo conectar con el servidor local de SmartStudio."))
+      .catch(() => setError(CONNECTION_ERROR))
     void refresh()
     if (busy) return
     const interval = window.setInterval(refresh, WORKFLOW_REFRESH_INTERVAL_MILLISECONDS)
@@ -100,7 +108,7 @@ export function App() {
     try {
       setState(await action())
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No se pudo completar la acción.")
+      setError(actionErrorMessage(caught))
     } finally {
       setBusy(false)
     }

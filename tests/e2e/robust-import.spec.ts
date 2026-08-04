@@ -42,7 +42,7 @@ test("asocia archivos concretos en cualquier orden y conserva originales", async
     await writeFile(path.join(backupDirectory, "BACKUP_001.ARW"), Buffer.from("RAW_BACKUP_001"))
     await writeFile(path.join(backupDirectory, "LEEME.txt"), "archivo ajeno", "utf8")
     const filesInput = application.page.getByLabel("Archivos RAW y JPEG")
-    await expect(filesInput).toHaveAttribute("accept", ".arw,.jpg,.jpeg,image/jpeg")
+    await expect(filesInput).toHaveAttribute("accept", ".arw,.cr2,.jpg,.jpeg,image/jpeg")
     await expect(filesInput).not.toHaveAttribute("webkitdirectory", "")
     await filesInput.setInputFiles([
       path.join(backupDirectory, "BACKUP_001.ARW"),

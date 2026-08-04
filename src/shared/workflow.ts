@@ -6,11 +6,21 @@ export type QualityWarning =
   | "exposure"
   | "incomplete-file"
 
+export const BACKDROP_COMPLETION_VALUES = ["completed", "unchanged", "omitted"] as const
+export type BackdropCompletion = typeof BACKDROP_COMPLETION_VALUES[number]
+export const BACKDROP_COMPLETION_LABELS: Record<BackdropCompletion, string> = {
+  completed: "completado",
+  unchanged: "sin cambios",
+  omitted: "omitido",
+}
+export const isBackdropCompletion = (value: unknown): value is BackdropCompletion =>
+  BACKDROP_COMPLETION_VALUES.includes(value as BackdropCompletion)
+
 export type QualityAssessment = {
   score: number
   warnings: QualityWarning[]
   analyzedAt: string
-  method: "local-heuristic" | "controlled-fixture"
+  method: "local-heuristic" | "local-mediapipe" | "controlled-fixture"
 }
 
 export type Capture = {
@@ -121,6 +131,7 @@ export type EditingJob = {
   approvedVersionId: string | null
   faceCount: number
   portraitWarnings: string[]
+  backdropCompletion: BackdropCompletion
   eyeEnhancementEnabled: boolean
   teethWhiteningEnabled: boolean
   metrics: {

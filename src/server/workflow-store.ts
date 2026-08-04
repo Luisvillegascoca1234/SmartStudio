@@ -3,6 +3,7 @@ import path from "node:path"
 
 import {
   emptyWorkflowState,
+  isBackdropCompletion,
   type Capture,
   type EditingJob,
   type Event,
@@ -122,6 +123,7 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
     approvedVersionId: typeof job.approvedVersionId === "string" ? job.approvedVersionId : versions.find((version) => version.approvalStatus === "approved")?.id ?? null,
     faceCount: typeof job.faceCount === "number" ? job.faceCount : 0,
     portraitWarnings: Array.isArray(job.portraitWarnings) ? job.portraitWarnings.filter((item): item is string => typeof item === "string") : [],
+    backdropCompletion: isBackdropCompletion(job.backdropCompletion) ? job.backdropCompletion : "unchanged",
     eyeEnhancementEnabled: job.eyeEnhancementEnabled !== false,
     teethWhiteningEnabled: job.teethWhiteningEnabled !== false,
     metrics: isRecord(job.metrics) ? job.metrics as EditingJob["metrics"] : { processingRoute: "cpu", previewMilliseconds: null, deliveryMilliseconds: null, failures: 0, retries: 0 },

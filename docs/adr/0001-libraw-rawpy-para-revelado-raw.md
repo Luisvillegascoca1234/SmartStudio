@@ -1,6 +1,6 @@
 # ADR 0001 — LibRaw/rawpy para el revelado RAW local
 
-**Estado:** aceptada
+**Estado:** reemplazada por ADR 0002 como ruta principal; conservada como respaldo
 
 ## Decisión
 

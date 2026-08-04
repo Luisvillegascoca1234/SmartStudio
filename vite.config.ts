@@ -11,6 +11,9 @@ export default defineConfig({
     }
   },
   server: {
+    watch: {
+      ignored: ["**/.smartstudio-data/**"]
+    },
     proxy: {
       "/api": "http://127.0.0.1:4173",
       "/captures": "http://127.0.0.1:4173",

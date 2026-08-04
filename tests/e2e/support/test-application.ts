@@ -6,6 +6,16 @@ import type { Browser, BrowserContext, Page } from "@playwright/test"
 
 import { createSmartStudioServer } from "../../../src/server/app.js"
 import type { WorkflowState } from "../../../src/shared/workflow.js"
+import type { PortraitFixture } from "../../../src/server/portrait-retoucher.js"
+import type { SimulationProfile } from "../../../src/server/simulator.js"
+
+type TestApplicationOptions = {
+  testFeatures?: boolean
+  path?: string
+  editingProcessingDelayMilliseconds?: number
+  controlledPortraitFixture?: PortraitFixture
+  simulatedCaptureProfile?: SimulationProfile
+}
 
 export class TestApplication {
   page!: Page
@@ -16,13 +26,13 @@ export class TestApplication {
   private constructor(
     private readonly browser: Browser,
     private readonly dataDirectory: string,
-    private readonly options: { testFeatures?: boolean; path?: string; editingProcessingDelayMilliseconds?: number },
+    private readonly options: TestApplicationOptions,
   ) {}
 
   static async start(
     browser: Browser,
     temporaryPrefix: string,
-    options: { testFeatures?: boolean; path?: string; editingProcessingDelayMilliseconds?: number } = {},
+    options: TestApplicationOptions = {},
   ): Promise<TestApplication> {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), temporaryPrefix))
     const application = new TestApplication(browser, dataDirectory, options)
@@ -59,6 +69,8 @@ export class TestApplication {
       staticDirectory: path.resolve("dist/client"),
       testFeatures: this.options.testFeatures,
       editingProcessingDelayMilliseconds: this.options.editingProcessingDelayMilliseconds,
+      controlledPortraitFixture: this.options.controlledPortraitFixture,
+      simulatedCaptureProfile: this.options.simulatedCaptureProfile,
     })
     this.address = await this.server.listen({ host: "127.0.0.1", port: 0 })
     this.context = await this.browser.newContext()

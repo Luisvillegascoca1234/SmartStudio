@@ -1,3 +1,4 @@
 rawpy==0.27.0
-opencv-python-headless==4.13.0.92
+mediapipe==0.10.35
+opencv-contrib-python==4.13.0.92
 lensfunpy==1.18.0

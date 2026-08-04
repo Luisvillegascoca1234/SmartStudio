@@ -3,6 +3,8 @@ import path from "node:path"
 import sharp from "sharp"
 import type { QualityWarning } from "../shared/workflow.js"
 
+export type SimulationProfile = QualityWarning | "backdrop"
+
 const escapeXml = (value: string): string =>
   value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 
@@ -10,7 +12,7 @@ export async function prepareSimulatedPair(options: {
   dataDirectory: string
   baseName: string
   capturedAt: string
-  profile?: QualityWarning
+  profile?: SimulationProfile
 }): Promise<{ rawPath: string; jpegPath: string }> {
   const inboxDirectory = path.join(options.dataDirectory, "simulator-inbox")
   await mkdir(inboxDirectory, { recursive: true })
@@ -31,7 +33,14 @@ export async function prepareSimulatedPair(options: {
   const timestamp = escapeXml(new Date(options.capturedAt).toLocaleString("es-BO"))
   const faceX = options.profile === "poor-framing" ? 10 : 930
   const closedEyes = options.profile === "eyes-closed"
-  const overlay = Buffer.from(`
+  const overlay = Buffer.from(options.profile === "backdrop" ? `
+    <svg width="1200" height="800" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1200" height="800" fill="#6f9ca8"/>
+      <path d="M0 0H1200V220L0 310Z" fill="#777b80"/>
+      <rect x="45" y="155" width="55" height="145" rx="15" fill="#111111"/>
+      <rect x="1090" y="145" width="50" height="150" rx="15" fill="#111111"/>
+      <ellipse cx="600" cy="465" rx="215" ry="305" fill="#b97852"/>
+    </svg>` : `
     <svg width="1200" height="800" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">

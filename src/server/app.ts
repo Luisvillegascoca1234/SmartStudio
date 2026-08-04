@@ -21,6 +21,8 @@ import {
 } from "../shared/workflow.js"
 import { CaptureService } from "./capture-service.js"
 import { EditingService } from "./editing-service.js"
+import type { PortraitFixture } from "./portrait-retoucher.js"
+import type { SimulationProfile } from "./simulator.js"
 import { OperationsService } from "./operations-service.js"
 import { SonyFolderReceiver } from "./sony-folder-receiver.js"
 import { WorkflowStore } from "./workflow-store.js"
@@ -32,6 +34,8 @@ export type ServerOptions = {
   logger?: boolean
   testFeatures?: boolean
   editingProcessingDelayMilliseconds?: number
+  controlledPortraitFixture?: PortraitFixture
+  simulatedCaptureProfile?: SimulationProfile
 }
 
 const requireText = (value: unknown, label: string): string => {
@@ -72,10 +76,11 @@ const createEditingJob = (event: Event, sessionId: string, capture: Capture, id 
   approvedVersionId: null,
   faceCount: 0,
   portraitWarnings: [],
+  backdropCompletion: "unchanged",
   eyeEnhancementEnabled: true,
   teethWhiteningEnabled: true,
   metrics: { processingRoute: "cpu", previewMilliseconds: null, deliveryMilliseconds: null, failures: 0, retries: 0 },
-  accelerationWarning: "Ruta CPU activa; OpenCV CUDA no está disponible en esta instalación.",
+  accelerationWarning: "La ruta de aceleración se confirmará al procesar la fotografía.",
 })
 
 const backupCoverage = (version: EditingVersion, paths: Set<string>): { included: boolean; attempted: boolean } => {
@@ -117,12 +122,13 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
       }
     }).catch(() => undefined)
   })
-  const captures = new CaptureService(store, options.dataDirectory)
+  const captures = new CaptureService(store, options.dataDirectory, options.testFeatures ? options.simulatedCaptureProfile : undefined)
   const editing = new EditingService(
     store,
     options.dataDirectory,
     options.editingProcessingDelayMilliseconds ?? (options.testFeatures ? 1_000 : 0),
     () => operations.assertCanFinishEditing(),
+    options.testFeatures ? options.controlledPortraitFixture : undefined,
   )
   await editing.initialize()
   const enqueueEditingCapture = async (eventId: string, sessionId: string, captureId: string): Promise<WorkflowState> => {

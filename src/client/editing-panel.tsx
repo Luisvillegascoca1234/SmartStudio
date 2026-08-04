@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import type { EditingJob, Event } from "../shared/workflow.js"
+import { BACKDROP_COMPLETION_LABELS, type EditingJob, type Event } from "../shared/workflow.js"
 import { editingStatusPresentation } from "./editing-presentation.js"
 
 const elapsedLabel = (job: EditingJob): string => {
@@ -198,12 +198,13 @@ export function EditingPanel({
                   )}
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <Badge variant="outline">{job.faceCount} rostro{job.faceCount === 1 ? "" : "s"} detectado{job.faceCount === 1 ? "" : "s"}</Badge>
+                    <Badge variant="outline">Fondo: {BACKDROP_COMPLETION_LABELS[job.backdropCompletion]}</Badge>
                     <span>Detección local sin identificación · ojos y dientes: mejora suave</span>
                     <span>Ruta {job.metrics.processingRoute.toUpperCase()} · vista previa {job.metrics.previewMilliseconds ?? "—"} ms · JPEG completo {job.metrics.deliveryMilliseconds ?? "—"} ms · fallos {job.metrics.failures} · reintentos {job.metrics.retries}</span>
                   </div>
                   {job.accelerationWarning && <p className="text-xs text-amber-300">{job.accelerationWarning}</p>}
                   {job.portraitWarnings.map((warning) => (
-                    <Alert key={warning} className="border-amber-500/35 bg-amber-500/10"><CircleAlert /><AlertTitle>Retoque facial omitido parcialmente</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>
+                    <Alert key={warning} className="border-amber-500/35 bg-amber-500/10"><CircleAlert /><AlertTitle>Corrección conservadora omitida parcialmente</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>
                   ))}
                   <ComparisonViewer captureId={capture.id} baseName={capture.baseName} job={job} />
                   <AdjustmentControls job={job} busy={busy} transition={transition} />

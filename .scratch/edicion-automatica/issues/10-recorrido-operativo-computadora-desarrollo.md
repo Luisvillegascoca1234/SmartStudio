@@ -2,7 +2,7 @@
 
 **What to build:** integrar todas las capacidades de Edición automática en un recorrido recuperable y medible que funcione primero en la computadora de desarrollo secundaria, usando GPU cuando sea adecuado y conservando una ruta funcional por CPU.
 
-**Blocked by:** 02 — Hacer persistente y recuperable la cola de edición; 03 — Revelar Sony ARW y autorizar la alternativa JPEG; 04 — Aplicar el perfil Natural de evento y ajustes manuales; 05 — Gestionar versiones, reprocesamiento y aprobación; 06 — Generar el JPEG completo listo para entrega; 07 — Añadir detección facial y suavizado de piel; 08 — Respaldar resultados y proteger el almacenamiento.
+**Blocked by:** 02 — Hacer persistente y recuperable la cola de edición; 03 — Revelar Sony ARW/Canon CR2 y autorizar la alternativa JPEG; 04 — Aplicar el perfil Natural de evento y ajustes manuales; 05 — Gestionar versiones, reprocesamiento y aprobación; 06 — Generar el JPEG completo listo para entrega; 07 — Añadir detección facial y suavizado de piel; 08 — Respaldar resultados y proteger el almacenamiento.
 
 **Status:** completed
 

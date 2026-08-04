@@ -11,7 +11,7 @@ import {
 } from "../shared/workflow.js"
 import { incorporateOriginal } from "./capture-ingestion.js"
 import { assessJpeg } from "./quality-analysis.js"
-import { prepareSimulatedPair } from "./simulator.js"
+import { prepareSimulatedPair, type SimulationProfile } from "./simulator.js"
 import { WorkflowStore } from "./workflow-store.js"
 
 type ImportedFile = { filepath: string; filename: string }
@@ -21,10 +21,11 @@ export class CaptureService {
   constructor(
     private readonly store: WorkflowStore,
     private readonly dataDirectory: string,
+    private readonly simulationProfile?: SimulationProfile,
   ) {}
 
   async simulatePair(): Promise<WorkflowState> {
-    const simulation = await this.prepareNextSimulation()
+    const simulation = await this.prepareNextSimulation(this.simulationProfile)
     await this.incorporate(simulation.jpegPath, `${simulation.baseName}.JPG`, "simulated-folder")
     return this.incorporate(simulation.rawPath, `${simulation.baseName}.ARW`, "simulated-folder")
   }
@@ -147,7 +148,10 @@ export class CaptureService {
       sourceFileName,
     })
     const quality = component.kind === "jpeg"
-      ? await assessJpeg(path.join(this.dataDirectory, component.relativePath))
+      ? await assessJpeg(path.join(this.dataDirectory, component.relativePath), {
+          controlledFixture: source === "simulated-folder",
+          modelDirectory: path.join(this.dataDirectory, "models"),
+        })
       : null
     return this.store.mutate((state) => {
       const currentSession = activeSession(state)!
@@ -200,7 +204,7 @@ export class CaptureService {
     })
   }
 
-  private async prepareNextSimulation(profile?: QualityWarning) {
+  private async prepareNextSimulation(profile?: SimulationProfile) {
     const current = this.store.snapshot()
     const session = activeSession(current)
     const series = activeSeries(current)

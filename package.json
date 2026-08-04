@@ -11,6 +11,7 @@
     "dev": "concurrently -k -n web,server -c cyan,magenta \"vite\" \"tsx watch src/server/start.ts\"",
     "build": "vite build",
     "start": "tsx src/server/start.ts",
+    "setup:vision": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-vision-models.ps1",
     "typecheck": "tsc --noEmit",
     "check": "pnpm typecheck && pnpm build",
     "test:e2e": "pnpm build && playwright test"
