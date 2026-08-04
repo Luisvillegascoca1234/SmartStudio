@@ -33,7 +33,24 @@ Los detalles, excepciones y criterios de aceptación deberán resolverse mediant
 
 ## Organización funcional
 
-SmartStudio será una sola aplicación local organizada por capacidades. El primer módulo especificado es **Evento, captura y selección**. Edición, QR, impresión, mensajes desde iPad y libro digital se tratarán posteriormente como capacidades separadas.
+SmartStudio será una sola aplicación local organizada por capacidades. El primer módulo especificado es **Evento, captura y selección**. El siguiente módulo será **Edición automática** y recibirá la fotografía principal de una sesión fotográfica lista para edición. QR, impresión, mensajes desde iPad y libro digital se tratarán posteriormente como capacidades separadas.
+
+## Edición automática confirmada
+
+- La fotografía principal se procesa automáticamente al finalizar una sesión fotográfica; las fotografías alternativas solo se procesan cuando el operador lo solicita.
+- La edición funciona localmente y sin una conexión obligatoria a internet. Puede usar GPU cuando esté disponible y continuar mediante CPU con menor rendimiento.
+- El procesamiento usa el RAW cuando está disponible. Procesar desde JPEG requiere autorización explícita y el resultado queda identificado como tal.
+- La importación manual admite inicialmente Sony ARW y Canon CR2 acompañados por JPG/JPEG. Cada modelo de cámara conserva una validación física separada.
+- Los RAW y JPEG originales permanecen inmutables. Cada procesamiento genera una versión derivada con sus parámetros, origen y estado de aprobación.
+- El perfil inicial será **Natural de evento**, orientado a iluminación y fondo controlados, piel natural, recuperación moderada de luces y sombras y ausencia de apariencia HDR.
+- La corrección contempla exposición, balance de blancos, contraste, color, reducción moderada de ruido y nitidez.
+- El retoque de personas será conservador: suavizado de piel suave, corrección de ojos rojos, blanqueamiento dental moderado y mejora ligera de brillo y nitidez de ojos. No cambia facciones, cuerpo, tamaño o forma de ojos, color del iris ni dirección de la mirada.
+- No se realizan automáticamente reencuadre, reemplazo de fondo, eliminación de objetos, modificación de identidad ni edición generativa.
+- El operador revisa una comparación antes/después y conserva la decisión final. Puede ajustar exposición, temperatura, intensidad de color y suavizado de piel, reprocesar, aprobar, revocar una aprobación o volver al original.
+- La aplicación mantiene una cola local que procesa una fotografía a la vez sin bloquear nuevas sesiones fotográficas. Los trabajos y parámetros se recuperan después de un reinicio; los resultados parciales no se consideran válidos.
+- La revisión usa una vista previa sRGB y, después de la aprobación, se genera un JPEG sRGB de resolución completa. Los resultados aprobados y sus datos se respaldan en el SSD cuando está disponible.
+- Una edición solo queda lista para entrega cuando el archivo completo es legible, está asociado con su original y tiene registrada su aprobación. El módulo no genera todavía QR, impresión ni otras salidas.
+- El objetivo es que al menos el 95 % de las vistas previas estén disponibles en 30 segundos o menos en la computadora objetivo. El primer recorrido funcional y sus mediciones se realizarán en la computadora de desarrollo secundaria antes de validar la laptop objetivo.
 
 ## Entorno objetivo conocido
 
@@ -70,3 +87,6 @@ La computadora de desarrollo secundaria utiliza Windows 10 Pro, Intel Core i7-10
 - **Computadora objetivo:** laptop en la que operará principalmente la aplicación durante los eventos.
 - **Computadora de desarrollo secundaria:** computadora actual utilizada para desarrollo y pruebas que no dependan del hardware final.
 - **RAW:** archivo de imagen con los datos de captura sin el revelado final.
+- **Perfil de edición:** conjunto versionado de criterios y parámetros que define el aspecto aplicado a una fotografía dentro de un evento.
+- **Versión de edición:** resultado derivado no destructivo asociado con una fotografía, su origen, perfil, parámetros y estado de aprobación.
+- **Edición aprobada:** versión elegida por el operador y preparada para generar el archivo completo listo para entrega.

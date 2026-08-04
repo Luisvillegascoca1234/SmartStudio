@@ -10,6 +10,7 @@ import { sha256File } from "./file-hash.js"
 const GIBIBYTE = 1024 ** 3
 const LOW_SPACE_BYTES = 100 * GIBIBYTE
 const CRITICAL_SPACE_BYTES = 20 * GIBIBYTE
+const EDITING_COMPLETION_MARGIN_BYTES = 512 * 1024 ** 2
 const BACKUP_FOLDER_NAME = "SmartStudioBackup"
 const POWER_CACHE_MILLISECONDS = 30_000
 const execFileAsync = promisify(execFile)
@@ -50,6 +51,7 @@ export class OperationsService {
     label: "Sony/Imaging Edge sin configurar; importación manual disponible",
     configured: false,
   })
+  private backupResultListener: ((result: { status: "verified" | "failed"; relativePaths: string[]; error: string | null }) => void) | null = null
 
   constructor(
     private readonly dataDirectory: string,
@@ -107,9 +109,26 @@ export class OperationsService {
     this.captureSourceProvider = provider
   }
 
+  onBackupResult(listener: (result: { status: "verified" | "failed"; relativePaths: string[]; error: string | null }) => void): void {
+    this.backupResultListener = listener
+  }
+
   async assertCanStartSession(): Promise<void> {
     if ((await this.snapshot()).blocksNewSession) {
       throw new Error("El espacio interno es crítico. Conecta un SSD antes de iniciar otra sesión fotográfica.")
+    }
+  }
+
+  async assertCanStartEditing(): Promise<void> {
+    if ((await this.snapshot()).internalStorage.level === "critical") {
+      throw new Error("El espacio interno es crítico. Libera espacio o recupera el SSD antes de iniciar otra edición.")
+    }
+  }
+
+  async assertCanFinishEditing(): Promise<void> {
+    const freeBytes = (await this.snapshot()).internalStorage.freeBytes
+    if (freeBytes < EDITING_COMPLETION_MARGIN_BYTES) {
+      throw new Error("El trabajo activo se detuvo: no existe margen interno comprobado para guardar el resultado.")
     }
   }
 
@@ -160,6 +179,7 @@ export class OperationsService {
       this.state.backupError = "El SSD se desconectó durante el respaldo."
       await this.persist()
     }
+    if (conditions.backupDisconnected === false || conditions.backupCopyFailure === false) this.scheduleBackup()
     return this.snapshot()
   }
 
@@ -168,10 +188,12 @@ export class OperationsService {
     this.state.backupStatus = "copying"
     this.state.backupError = null
     await this.persist()
+    let relativePaths: string[] = []
     try {
+      const files = await this.eventDataFiles()
+      relativePaths = files.map((sourcePath) => path.relative(this.dataDirectory, sourcePath))
       if (this.testConditions.backupDisconnected) throw new Error("El SSD se desconectó durante el respaldo.")
       if (this.testConditions.backupCopyFailure) throw new Error("No se pudo verificar la copia escrita en el SSD.")
-      const files = await this.eventDataFiles()
       let verifiedFiles = 0
       for (const sourcePath of files) {
         const relativePath = path.relative(this.dataDirectory, sourcePath)
@@ -188,9 +210,11 @@ export class OperationsService {
       this.state.backupStatus = "verified"
       this.state.verifiedFiles = verifiedFiles
       this.state.lastVerifiedAt = new Date().toISOString()
+      this.backupResultListener?.({ status: "verified", relativePaths, error: null })
     } catch (error) {
       this.state.backupStatus = this.testConditions.backupDisconnected ? "disconnected" : "error"
       this.state.backupError = error instanceof Error ? error.message : "El respaldo local falló."
+      this.backupResultListener?.({ status: "failed", relativePaths, error: this.state.backupError })
     }
     await this.persist()
   }

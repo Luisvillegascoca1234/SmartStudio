@@ -16,13 +16,13 @@ export class TestApplication {
   private constructor(
     private readonly browser: Browser,
     private readonly dataDirectory: string,
-    private readonly options: { testFeatures?: boolean; path?: string },
+    private readonly options: { testFeatures?: boolean; path?: string; editingProcessingDelayMilliseconds?: number },
   ) {}
 
   static async start(
     browser: Browser,
     temporaryPrefix: string,
-    options: { testFeatures?: boolean; path?: string } = {},
+    options: { testFeatures?: boolean; path?: string; editingProcessingDelayMilliseconds?: number } = {},
   ): Promise<TestApplication> {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), temporaryPrefix))
     const application = new TestApplication(browser, dataDirectory, options)
@@ -58,6 +58,7 @@ export class TestApplication {
       dataDirectory: this.dataDirectory,
       staticDirectory: path.resolve("dist/client"),
       testFeatures: this.options.testFeatures,
+      editingProcessingDelayMilliseconds: this.options.editingProcessingDelayMilliseconds,
     })
     this.address = await this.server.listen({ host: "127.0.0.1", port: 0 })
     this.context = await this.browser.newContext()

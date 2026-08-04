@@ -60,18 +60,111 @@ export type Event = {
   closedAt: string | null
   status: "active" | "closed"
   sessions: PhotoSession[]
+  editingProfile: EditingProfile
+}
+
+export type EditingAdjustments = {
+  exposure: number
+  temperature: number
+  colorIntensity: number
+  skinSmoothing: number
+}
+
+export type EditingProfile = {
+  id: "natural-event"
+  name: "Natural de evento"
+  version: number
+  defaults: EditingAdjustments
+}
+
+export const naturalEventProfile = (version = 1): EditingProfile => ({
+  id: "natural-event",
+  name: "Natural de evento",
+  version,
+  defaults: { exposure: 0, temperature: 0, colorIntensity: 0, skinSmoothing: 1 },
+})
+
+export type EditingJobStatus =
+  | "queued"
+  | "processing"
+  | "awaiting-jpeg-authorization"
+  | "jpeg-rejected"
+  | "review"
+  | "approved"
+  | "failed"
+  | "interrupted"
+  | "cancelled"
+
+export type EditingJob = {
+  id: string
+  eventId: string
+  sessionId: string
+  captureId: string
+  status: EditingJobStatus
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  previewReadyAt: string | null
+  approvedAt: string | null
+  previewRelativePath: string | null
+  error: string | null
+  attempts: number
+  origin: "raw" | "jpeg" | null
+  rawIssue: "missing" | "corrupt" | "unsupported" | null
+  jpegFallbackDecision: "not-needed" | "pending" | "authorized" | "rejected"
+  profile: EditingProfile
+  adjustments: EditingAdjustments
+  uncontrolledConditionsWarning: string | null
+  lensCorrectionApplied: boolean
+  versions: EditingVersion[]
+  currentVersionId: string | null
+  approvedVersionId: string | null
+  faceCount: number
+  portraitWarnings: string[]
+  eyeEnhancementEnabled: boolean
+  teethWhiteningEnabled: boolean
+  metrics: {
+    processingRoute: "cpu" | "gpu"
+    previewMilliseconds: number | null
+    deliveryMilliseconds: number | null
+    failures: number
+    retries: number
+  }
+  accelerationWarning: string | null
+}
+
+export type EditingVersion = {
+  id: string
+  number: number
+  createdAt: string
+  profile: EditingProfile
+  adjustments: EditingAdjustments
+  origin: "raw" | "jpeg"
+  previewRelativePath: string
+  approvalStatus: "review" | "approved" | "revoked" | "superseded"
+  approvedAt: string | null
+  revokedAt: string | null
+  fullRelativePath: string | null
+  deliveryStatus: "not-requested" | "generating" | "ready" | "failed"
+  deliveryError: string | null
+  width: number | null
+  height: number | null
+  backupStatus: "pending" | "verified" | "failed"
+  backupError: string | null
 }
 
 export type WorkflowState = {
-  version: 4
+  version: 10
   events: Event[]
+  editingJobs: EditingJob[]
   activeEventId: string | null
   savedAt: string | null
 }
 
 export const emptyWorkflowState = (): WorkflowState => ({
-  version: 4,
+  version: 10,
   events: [],
+  editingJobs: [],
   activeEventId: null,
   savedAt: null,
 })
@@ -91,4 +184,19 @@ export const sessionCaptures = (session: PhotoSession): Capture[] =>
 export const sessionIsReadyForEditing = (session: PhotoSession): boolean => {
   const selected = sessionCaptures(session).filter((capture) => capture.selected)
   return selected.length >= 1 && selected.length <= 3 && selected.filter((capture) => capture.principal).length === 1
+}
+
+export const editingJobsForEvent = (state: WorkflowState, eventId: string): EditingJob[] =>
+  state.editingJobs.filter((job) => job.eventId === eventId)
+
+export const captureById = (state: WorkflowState, id: string): Capture | null => {
+  for (const event of state.events) {
+    for (const session of event.sessions) {
+      for (const series of session.series) {
+        const capture = series.captures.find((item) => item.id === id)
+        if (capture) return capture
+      }
+    }
+  }
+  return null
 }

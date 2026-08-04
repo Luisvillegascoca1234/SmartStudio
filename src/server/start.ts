@@ -8,7 +8,7 @@ const port = Number(process.env.SMARTSTUDIO_PORT ?? 4173);
 const app = await createSmartStudioServer({
   dataDirectory,
   staticDirectory: path.join(projectDirectory, "dist/client"),
-  logger: true
+  logger: false
 });
 
 await app.listen({ host: "127.0.0.1", port });

@@ -57,7 +57,7 @@ test("administra eventos, sesiones fotográficas numeradas, múltiples series, c
     await expect(application.page.getByAltText("Captura conservada SIM_S02_R01_001")).toBeVisible()
 
     await application.page.getByRole("button", { name: "Cerrar evento" }).click()
-    await expect(application.page.getByText("Boda ciclo completo")).toBeVisible()
+    await expect(application.page.getByText("Boda ciclo completo", { exact: true })).toBeVisible()
     await application.page.getByRole("button", { name: "Reabrir evento" }).click()
     await expect(application.page.getByText("Evento recuperado")).toBeVisible()
     await expect(application.page.getByText("Sesión fotográfica 2 · Amigos")).toBeVisible()

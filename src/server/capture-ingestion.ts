@@ -12,7 +12,7 @@ export type IncorporatedComponent = {
   sha256: string
 }
 
-const rawExtensions = new Set([".arw", ".dng"])
+const rawExtensions = new Set([".arw", ".cr2", ".dng"])
 const jpegExtensions = new Set([".jpg", ".jpeg"])
 
 export const classifyCaptureFile = (fileName: string): CaptureComponentKind | null => {

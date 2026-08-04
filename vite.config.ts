@@ -13,7 +13,8 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://127.0.0.1:4173",
-      "/captures": "http://127.0.0.1:4173"
+      "/captures": "http://127.0.0.1:4173",
+      "/editing": "http://127.0.0.1:4173"
     }
   },
   build: {

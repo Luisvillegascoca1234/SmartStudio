@@ -4,14 +4,14 @@ Repositorio de una futura aplicación local para automatizar el flujo de trabajo
 
 ## Estado
 
-Está en desarrollo el primer módulo: evento, captura y selección. Ya permite el flujo local con capturas simuladas o importadas, advertencias de calidad, respaldo verificado y recepción automática desde la carpeta de Imaging Edge Remote. La transferencia con una Sony A7 IV todavía requiere validación física en la laptop objetivo; no incluye edición, QR, impresión ni mensajes desde iPad.
+Ya funcionan localmente evento, captura, selección y la primera edición automática. La cola de edición es persistente y recuperable; revela RAW mediante LibRaw/rawpy y solicita autorización antes de recurrir al JPEG. La transferencia física desde cámara todavía requiere validación con el hardware real; no incluye QR, impresión ni mensajes desde iPad.
 
 ## Entorno de desarrollo
 
 - Git con rama principal `main`.
 - Node.js `24.18.0` LTS, seleccionado mediante `fnm` y `.node-version`.
 - pnpm disponible mediante el entorno de Node/Corepack.
-- Python y `uv` disponibles para una futura evaluación; todavía no forman parte de la arquitectura.
+- Python 3.11+ con rawpy/LibRaw, OpenCV y Lensfun para revelado y retoque local.
 - Docker y CUDA no son requisitos del proyecto en esta etapa.
 
 La interfaz usa React, Tailwind CSS 4 y componentes shadcn/ui almacenados localmente en `src/components/ui/`. La configuración se conserva en `components.json`; agregar un componente no introduce una dependencia de servicios en línea durante la ejecución.
@@ -20,6 +20,7 @@ La interfaz usa React, Tailwind CSS 4 y componentes shadcn/ui almacenados localm
 
 ```powershell
 pnpm install
+python -m pip install -r requirements-raw.txt
 pnpm dev
 ```
 
@@ -53,6 +54,7 @@ El proyecto no adopta TDD como regla global. La implementación deberá verifica
 - `CONTEXT.md`: contexto estable y vocabulario del dominio.
 - `docs/agents/`: configuración compartida por las Skills.
 - `docs/sony-a7iv-usb-validation.md`: mecanismo USB elegido y validación física pendiente.
+- `docs/editing-development-reference.md`: mediciones automatizadas de edición en esta computadora.
 - `docs/adr/`: decisiones arquitectónicas futuras, creadas solo cuando sean necesarias.
 - `.scratch/`: especificaciones y tickets locales creados por las Skills cuando comience la definición del proyecto.
 

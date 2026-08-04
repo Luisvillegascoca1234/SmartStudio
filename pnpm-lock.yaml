@@ -23,6 +23,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      exifreader:
+        specifier: 4.41.3
+        version: 4.41.3
       fastify:
         specifier: 5.11.0
         version: 5.11.0
@@ -1688,6 +1691,10 @@ packages:
       babel-plugin-react-compiler:
         optional: true
 
+  '@xmldom/xmldom@0.9.10':
+    resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
+    engines: {node: '>=14.6'}
+
   abstract-logging@2.0.1:
     resolution: {integrity: sha512-2BjRTZxTPvheOvGbBslFSYOUkr+SjPtOnrLP33f+VIWLzezQpZcqVg7ja3L4dBXmzzgwT+a029jRx5PCi3JuiA==}
 
@@ -2048,6 +2055,10 @@ packages:
   execa@9.6.1:
     resolution: {integrity: sha512-9Be3ZoN4LmYR90tUoVu2te2BsbzHfhJyfEiAVfz7N5/zv+jduIfLrV2xdQXOHbaD6KgpGdO9PRPM1Y4Q9QkPkA==}
     engines: {node: ^18.19.0 || >=20.5.0}
+
+  exifreader@4.41.3:
+    resolution: {integrity: sha512-bjc9UGw2OOj5Z0FQec5HRzH8A/gzGpWJLj74+Hffp0ri6JnjmXKtPXa3Ok9qwSaBa3zFsqAdXo8cjAwtj0bD+Q==}
+    hasBin: true
 
   express-rate-limit@8.6.1:
     resolution: {integrity: sha512-0D493aP61w0TJ2A0wy27riRsO7FMQ7FK+KUHOKCSfPvYo0R55aiC6emCVgFUeShH0fq0ICPVzNcgoS+BsbXQCA==}
@@ -4814,6 +4825,9 @@ snapshots:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.2.0(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)
 
+  '@xmldom/xmldom@0.9.10':
+    optional: true
+
   abstract-logging@2.0.1: {}
 
   accepts@2.0.0:
@@ -5151,6 +5165,10 @@ snapshots:
       signal-exit: 4.1.0
       strip-final-newline: 4.0.0
       yoctocolors: 2.2.0
+
+  exifreader@4.41.3:
+    optionalDependencies:
+      '@xmldom/xmldom': 0.9.10
 
   express-rate-limit@8.6.1(express@5.2.1):
     dependencies:

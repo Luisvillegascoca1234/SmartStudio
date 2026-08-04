@@ -67,7 +67,7 @@ export function CaptureCard({ capture, seriesStatus, selectedCount, busy, transi
         <CardTitle>{capture.baseName}</CardTitle>
         <CardDescription>
           {capture.status === "complete" ? "RAW + JPEG asociados" : capture.status === "raw-pending" ? "RAW pendiente · JPEG disponible" : "JPEG pendiente · RAW conservado"}
-          {` · ${capture.source === "manual-folder" ? "Carpeta de respaldo" : capture.source === "sony-usb-folder" ? "Carpeta Sony/Imaging Edge" : "Carpeta simulada"}`}
+          {` · ${capture.source === "manual-folder" ? "Archivos seleccionados" : capture.source === "sony-usb-folder" ? "Carpeta Sony/Imaging Edge" : "Carpeta simulada"}`}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">

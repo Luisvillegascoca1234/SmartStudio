@@ -7,7 +7,7 @@ import sharp from "sharp"
 import { activeSeries } from "../../src/shared/workflow.js"
 import { TestApplication } from "./support/test-application.js"
 
-test("asocia componentes en cualquier orden, importa una carpeta y conserva originales", async ({ browser }) => {
+test("asocia archivos concretos en cualquier orden y conserva originales", async ({ browser }) => {
   const application = await TestApplication.start(browser, "smartstudio-import-")
   const backupDirectory = await mkdtemp(path.join(tmpdir(), "smartstudio-backup-"))
 
@@ -41,15 +41,23 @@ test("asocia componentes en cualquier orden, importa una carpeta y conserva orig
     }).jpeg().toFile(path.join(backupDirectory, "BACKUP_002.JPG"))
     await writeFile(path.join(backupDirectory, "BACKUP_001.ARW"), Buffer.from("RAW_BACKUP_001"))
     await writeFile(path.join(backupDirectory, "LEEME.txt"), "archivo ajeno", "utf8")
-    const directoryInput = application.page.getByLabel("Carpeta de respaldo")
-    await expect(directoryInput).toHaveAttribute("webkitdirectory", "")
-    await directoryInput.setInputFiles(backupDirectory)
-    await application.page.getByRole("button", { name: "Importar carpeta" }).click()
+    const filesInput = application.page.getByLabel("Archivos RAW y JPEG")
+    await expect(filesInput).toHaveAttribute("accept", ".arw,.jpg,.jpeg,image/jpeg")
+    await expect(filesInput).not.toHaveAttribute("webkitdirectory", "")
+    await filesInput.setInputFiles([
+      path.join(backupDirectory, "BACKUP_001.ARW"),
+      path.join(backupDirectory, "BACKUP_001.JPG"),
+      path.join(backupDirectory, "BACKUP_002.JPG"),
+      path.join(backupDirectory, "LEEME.txt"),
+    ])
+    await expect(application.page.getByText("Seleccionados: BACKUP_001.ARW · BACKUP_001.JPG · BACKUP_002.JPG · LEEME.txt")).toBeVisible()
+    await application.page.getByRole("button", { name: "Importar archivos" }).click()
 
     const completeManual = application.page.getByTestId("capture-BACKUP_001")
     const incompleteManual = application.page.getByTestId("capture-BACKUP_002")
     await expect(completeManual.getByText("Completa", { exact: true })).toBeVisible()
     await expect(incompleteManual.getByText("RAW pendiente", { exact: false })).toBeVisible()
+    await expect(completeManual.getByText("Archivos seleccionados", { exact: false })).toBeVisible()
     await expect(application.page.getByText("Archivo no reconocido: LEEME.txt")).toBeVisible()
 
     await incompleteManual.getByRole("button", { name: "Autorizar JPEG de emergencia" }).click()

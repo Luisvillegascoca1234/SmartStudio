@@ -70,7 +70,7 @@ export class CaptureService {
   }
 
   async importFiles(files: ImportedFile[]): Promise<WorkflowState> {
-    if (files.length === 0) return this.addWarning("La carpeta seleccionada no contenía archivos.")
+    if (files.length === 0) return this.addWarning("No se seleccionaron archivos para importar.")
     let state = this.store.snapshot()
     for (const file of files) {
       try {

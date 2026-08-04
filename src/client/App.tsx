@@ -24,10 +24,12 @@ import {
   activeEvent,
   activeSeries,
   activeSession,
+  editingJobsForEvent,
   sessionIsReadyForEditing,
   type WorkflowState,
 } from "../shared/workflow.js"
 import { CaptureWorkspace } from "./capture-workspace.js"
+import { EditingPanel } from "./editing-panel.js"
 import { OperationalPanel } from "./operational-panel.js"
 import { useOperations } from "./use-operations.js"
 import { ActionCard, SessionHistory, Step } from "./workflow-panels.js"
@@ -69,13 +71,21 @@ export function App() {
     () => (currentSession ? sessionIsReadyForEditing(currentSession) : false),
     [currentSession],
   )
+  const eventEditingJobs = useMemo(
+    () => (state && currentEvent ? editingJobsForEvent(state, currentEvent.id) : []),
+    [currentEvent, state],
+  )
+  const editingComplete = useMemo(
+    () => eventEditingJobs.some((job) => job.status === "approved"),
+    [eventEditingJobs],
+  )
 
   useEffect(() => {
     const refresh = () => fetch("/api/state")
       .then(async (response) => (await response.json()) as WorkflowState)
       .then((nextState) => {
         setState(nextState)
-        setError(null)
+        setError((current) => current === "No se pudo conectar con el servidor local de SmartStudio." ? null : current)
       })
       .catch(() => setError("No se pudo conectar con el servidor local de SmartStudio."))
     void refresh()
@@ -143,7 +153,7 @@ export function App() {
         <header className="mb-6 flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold tracking-[0.22em] text-primary">SMARTSTUDIO · OPERADOR</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-5xl">Captura y selección</h1>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-5xl">Captura, selección y edición</h1>
           </div>
           <Badge variant="outline" className="hidden gap-1.5 border-primary/25 bg-primary/5 px-3 py-2 text-primary sm:flex">
             <HardDrive data-icon="inline-start" />
@@ -195,23 +205,24 @@ export function App() {
           <Alert variant="destructive" className="mb-6 bg-destructive/10" role="alert">
             <HardDrive />
             <AlertTitle>El espacio interno es crítico</AlertTitle>
-            <AlertDescription>Puedes terminar esta sesión fotográfica; no se permitirá iniciar otra sin un SSD disponible y sin errores.</AlertDescription>
+            <AlertDescription>La sesión se conserva, pero no puede iniciar su edición hasta recuperar margen interno seguro.</AlertDescription>
           </Alert>
         )}
         {currentSession && operations?.captureSource.configured && operations.captureSource.status === "unavailable" && (
           <Alert variant="destructive" className="mb-6 bg-destructive/10" role="alert">
             <Camera />
             <AlertTitle>Carpeta de recepción Sony no disponible</AlertTitle>
-            <AlertDescription>{operations.captureSource.label}. Puedes continuar con “Importar carpeta”; la sesión fotográfica activa no se detiene.</AlertDescription>
+            <AlertDescription>{operations.captureSource.label}. Puedes continuar con “Importar archivos”; la sesión fotográfica activa no se detiene.</AlertDescription>
           </Alert>
         )}
 
         <div className="grid gap-5 lg:grid-cols-[170px_minmax(0,1fr)] lg:gap-8">
-          <aside className="grid grid-cols-4 lg:block" aria-label="Progreso">
+          <aside className="grid grid-cols-5 lg:block" aria-label="Progreso">
             <Step number="01" label="Evento" complete={Boolean(currentEvent)} />
             <Step number="02" label="Sesión fotográfica" complete={Boolean(currentSession)} />
             <Step number="03" label="Serie" complete={Boolean(series)} />
             <Step number="04" label="Selección" complete={selectionReady} />
+            <Step number="05" label="Edición" complete={editingComplete} />
           </aside>
 
           <Card className="min-h-[540px] border-border/80 bg-card/90 shadow-2xl shadow-black/20 backdrop-blur">
@@ -299,6 +310,13 @@ export function App() {
                 </div>
                 <Separator className="my-7" />
 
+                <EditingPanel
+                  event={currentEvent}
+                  jobs={eventEditingJobs}
+                  busy={busy}
+                  transition={(path, body) => void run(() => postWorkflowTransition(path, body))}
+                />
+
                 {!currentSession && (
                   <>
                     <OperationalPanel
@@ -324,6 +342,7 @@ export function App() {
                     {currentEvent.sessions.length > 0 && (
                       <SessionHistory
                         sessions={currentEvent.sessions}
+                        editingJobs={eventEditingJobs}
                         busy={busy}
                         restore={(id) => void run(() => postWorkflowTransition(`/api/sessions/${id}/restore`))}
                       />

@@ -35,17 +35,17 @@ test("incorpora la carpeta de Imaging Edge y conserva la importación manual si 
 
     await rename(sourceDirectory, disconnectedDirectory)
     await expect(application.page.getByText("Carpeta de recepción Sony no disponible")).toBeVisible({ timeout: 8_000 })
-    await expect(application.page.getByRole("button", { name: "Importar carpeta" })).toBeVisible()
+    await expect(application.page.getByRole("button", { name: "Importar archivos" })).toBeVisible()
 
     const fallback = await prepareSimulatedPair({
       dataDirectory: fixtureDirectory,
       baseName: "DSC00002",
       capturedAt: new Date().toISOString(),
     })
-    await application.page.getByLabel("Carpeta de respaldo").setInputFiles(path.dirname(fallback.jpegPath))
-    await application.page.getByRole("button", { name: "Importar carpeta" }).click()
+    await application.page.getByLabel("Archivos RAW y JPEG").setInputFiles([fallback.rawPath, fallback.jpegPath])
+    await application.page.getByRole("button", { name: "Importar archivos" }).click()
     await expect(application.page.getByTestId("capture-DSC00002").getByText("RAW + JPEG asociados", { exact: false })).toBeVisible()
-    await expect(application.page.getByTestId("capture-DSC00002").getByText("Carpeta de respaldo", { exact: false })).toBeVisible()
+    await expect(application.page.getByTestId("capture-DSC00002").getByText("Archivos seleccionados", { exact: false })).toBeVisible()
 
     await application.reopen()
     await expect(application.page.getByText("Carpeta de recepción Sony no disponible")).toBeVisible()

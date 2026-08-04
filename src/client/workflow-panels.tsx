@@ -11,8 +11,9 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import type { PhotoSession, Series } from "../shared/workflow.js"
+import type { EditingJob, PhotoSession, Series } from "../shared/workflow.js"
 import { CaptureCard } from "./capture-card.js"
+import { editingStatusPresentation } from "./editing-presentation.js"
 
 export function Step({ number, label, complete }: { number: string; label: string; complete: boolean }) {
   return (
@@ -41,10 +42,12 @@ export function ActionCard({ title, copy, icon, children }: { title: string; cop
 
 export function SessionHistory({
   sessions,
+  editingJobs,
   busy,
   restore,
 }: {
   sessions: PhotoSession[]
+  editingJobs: EditingJob[]
   busy: boolean
   restore: (id: string) => void
 }) {
@@ -52,12 +55,17 @@ export function SessionHistory({
     <section className="mt-7">
       <h3 className="text-sm font-semibold">Historial de sesiones fotográficas</h3>
       <div className="mt-3 grid gap-2">
-        {sessions.toReversed().map((session) => (
-          <Card key={session.id} size="sm" className="bg-background/35">
+        {sessions.toReversed().map((session) => {
+          const principalId = session.series.flatMap((series) => series.captures).find((capture) => capture.principal)?.id
+          const editingJob = editingJobs
+            .filter((job) => job.sessionId === session.id && job.captureId === principalId)
+            .toSorted((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]
+          const editingLabel = editingJob ? editingStatusPresentation[editingJob.status].history : null
+          return <Card key={session.id} size="sm" className="bg-background/35">
             <CardHeader>
               <CardTitle>Sesión fotográfica {session.number}{session.label ? ` · ${session.label}` : ""}</CardTitle>
               <CardDescription>
-                {session.series.length} serie{session.series.length === 1 ? "" : "s"} · {session.status === "cancelled" ? "Cancelada" : "Finalizada"}
+                {session.series.length} serie{session.series.length === 1 ? "" : "s"} · {session.status === "cancelled" ? "Cancelada" : "Finalizada"}{editingLabel ? ` · ${editingLabel}` : ""}
               </CardDescription>
               {session.status === "cancelled" && (
                 <CardAction>
@@ -86,7 +94,7 @@ export function SessionHistory({
               </CardContent>
             )}
           </Card>
-        ))}
+        })}
       </div>
     </section>
   )

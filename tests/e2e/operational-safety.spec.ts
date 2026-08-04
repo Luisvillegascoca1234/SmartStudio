@@ -108,8 +108,14 @@ test("protege nuevas sesiones fotográficas y verifica el respaldo sin detener e
     await application.page.getByTestId("capture-SIM_S01_R01_001").getByRole("button", { name: "Seleccionar", exact: true }).click()
     await application.page.getByTestId("capture-SIM_S01_R01_001").getByRole("button", { name: "Marcar principal" }).click()
     await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
-    await expect(application.page.getByText("Espacio crítico: nueva sesión fotográfica bloqueada")).toBeVisible()
-    await expect(application.page.getByRole("button", { name: "Iniciar sesión fotográfica" })).toBeDisabled()
+    await expect(application.page.getByText(/espacio interno es crítico.*iniciar otra edición/i)).toBeVisible()
+    expect((await application.state()).editingJobs).toHaveLength(0)
+    await setConditions({ freeBytes: 50 * GIBIBYTE })
+    await application.page.reload()
+    await expect(application.page.getByRole("heading", { name: "Selección lista" })).toBeVisible()
+    await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
+    await expect.poll(async () => (await application.state()).editingJobs.length).toBe(1)
+    await expect(application.page.getByRole("button", { name: "Iniciar sesión fotográfica" })).toBeEnabled()
 
     await application.reopen()
     await expect(application.page.getByText("Problema con el respaldo externo")).toBeVisible()
@@ -117,5 +123,51 @@ test("protege nuevas sesiones fotográficas y verifica el respaldo sin detener e
   } finally {
     await application.close()
     await rm(externalDirectory, { recursive: true, force: true })
+  }
+})
+
+test("un trabajo activo termina con margen crítico comprobado y se detiene sin ese margen", async ({ browser }) => {
+  const application = await TestApplication.start(browser, "smartstudio-editing-margin-", {
+    testFeatures: true,
+    editingProcessingDelayMilliseconds: 2_000,
+  })
+  const setFreeBytes = async (freeBytes: number) => {
+    await application.page.evaluate(async (amount) => {
+      await fetch("/api/test/operations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ freeBytes: amount }),
+      })
+    }, freeBytes)
+  }
+  const startEditingSession = async () => {
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
+    await application.page.getByRole("button", { name: "Iniciar serie" }).click()
+    await application.page.getByRole("button", { name: "Simular captura RAW + JPEG" }).click()
+    await expect(application.page.getByText("RAW + JPEG asociados", { exact: false }).last()).toBeVisible()
+    await application.page.getByRole("button", { name: "Cerrar serie" }).click()
+    await application.page.getByRole("button", { name: "Seleccionar", exact: true }).click()
+    await application.page.getByRole("button", { name: "Marcar principal" }).click()
+    await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
+  }
+
+  try {
+    await setFreeBytes(50 * GIBIBYTE)
+    await application.page.getByLabel("Nombre del evento").fill("Margen de edición")
+    await application.page.getByRole("button", { name: "Crear evento" }).click()
+    await startEditingSession()
+    await expect.poll(async () => (await application.state()).editingJobs[0].status).toBe("processing")
+    await setFreeBytes(5 * GIBIBYTE)
+    await expect.poll(async () => (await application.state()).editingJobs[0].status, { timeout: 10_000 }).toBe("review")
+
+    await setFreeBytes(50 * GIBIBYTE)
+    await application.page.reload()
+    await startEditingSession()
+    await expect.poll(async () => (await application.state()).editingJobs[1].status).toBe("processing")
+    await setFreeBytes(100 * 1024 ** 2)
+    await expect.poll(async () => (await application.state()).editingJobs[1].status, { timeout: 10_000 }).toBe("failed")
+    expect((await application.state()).editingJobs[1].error).toContain("margen interno comprobado")
+  } finally {
+    await application.close()
   }
 })

@@ -1,4 +1,4 @@
-import { type FormEvent, type InputHTMLAttributes, useMemo, useState } from "react"
+import { type FormEvent, useMemo, useState } from "react"
 import { CircleAlert, FolderInput } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -26,10 +26,6 @@ type Props = {
   reportError: (message: string) => void
 }
 
-const directoryInputProps = {
-  webkitdirectory: "",
-} as InputHTMLAttributes<HTMLInputElement>
-
 const INCOMPLETE_QUALITY_PENALTY = 40
 const EXCLUDED_QUALITY_PENALTY = 100
 
@@ -52,10 +48,10 @@ export function CaptureWorkspace({ series, session, busy, transition, execute, r
     [qualityOrder, series.captures],
   )
 
-  const importFromFolder = (event: FormEvent) => {
+  const importSelectedFiles = (event: FormEvent) => {
     event.preventDefault()
     if (!importFiles || importFiles.length === 0) {
-      reportError("Selecciona una carpeta de respaldo.")
+      reportError("Selecciona el archivo RAW, el JPEG o ambos.")
       return
     }
     const body = new FormData()
@@ -63,7 +59,7 @@ export function CaptureWorkspace({ series, session, busy, transition, execute, r
     execute(async () => {
       const response = await fetch("/api/imports", { method: "POST", body })
       const result = (await response.json()) as WorkflowState | { error: string }
-      if (!response.ok) throw new Error("error" in result ? result.error : "No se pudo importar la carpeta.")
+      if (!response.ok) throw new Error("error" in result ? result.error : "No se pudieron importar los archivos.")
       return result as WorkflowState
     })
   }
@@ -99,17 +95,21 @@ export function CaptureWorkspace({ series, session, busy, transition, execute, r
               </Button>
             )}
           </div>
-          <form onSubmit={importFromFolder} className="grid gap-2 rounded-lg border border-border bg-background/35 p-3 sm:grid-cols-[1fr_auto]">
+          <form onSubmit={importSelectedFiles} className="grid gap-2 rounded-lg border border-border bg-background/35 p-3 sm:grid-cols-[1fr_auto]">
             <Input
-              {...directoryInputProps}
               type="file"
               multiple
-              aria-label="Carpeta de respaldo"
+              accept=".arw,.cr2,.jpg,.jpeg,image/jpeg"
+              aria-label="Archivos RAW y JPEG"
               onChange={(event) => setImportFiles(event.target.files)}
               className="h-8 bg-background file:text-foreground"
             />
-            <Button type="submit" size="sm" variant="secondary" disabled={busy}>Importar carpeta</Button>
-            <p className="text-xs text-muted-foreground sm:col-span-2">Selecciona la carpeta completa. Si el navegador no lo permite, puedes seleccionar varios archivos como alternativa.</p>
+            <Button type="submit" size="sm" variant="secondary" disabled={busy}>Importar archivos</Button>
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              {importFiles?.length
+                ? `Seleccionados: ${Array.from(importFiles).map((file) => file.name).join(" · ")}`
+                : "Elige directamente el ARW o CR2 y su JPG/JPEG. Puedes seleccionar ambos a la vez."}
+            </p>
           </form>
           <div className="flex gap-2">
             <Button disabled={busy || series.captures.length === 0} onClick={() => transition("/api/series/close")}>Cerrar serie</Button>
