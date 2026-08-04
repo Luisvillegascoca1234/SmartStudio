@@ -64,8 +64,8 @@ export function OperationalPanel({ operations, busy, configureBackup, configureS
       {operations.blocksNewSession && (
         <Alert variant="destructive" className="mt-3 bg-destructive/10">
           <HardDrive />
-          <AlertTitle>Espacio crítico: nueva sesión bloqueada</AlertTitle>
-          <AlertDescription>La sesión activa puede terminarse. Para iniciar otra, conecta un SSD escribible.</AlertDescription>
+          <AlertTitle>Espacio crítico: nueva sesión fotográfica bloqueada</AlertTitle>
+          <AlertDescription>La sesión fotográfica activa puede terminarse. Para iniciar otra, conecta un SSD escribible.</AlertDescription>
         </Alert>
       )}
 

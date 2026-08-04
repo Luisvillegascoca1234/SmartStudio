@@ -14,7 +14,7 @@ test("asocia componentes en cualquier orden, importa una carpeta y conserva orig
   try {
     await application.page.getByLabel("Nombre del evento").fill("Importación robusta")
     await application.page.getByRole("button", { name: "Crear evento" }).click()
-    await application.page.getByRole("button", { name: "Iniciar sesión" }).click()
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
     await application.page.getByRole("button", { name: "Iniciar serie" }).click()
 
     await application.page.getByRole("button", { name: "Simular JPEG primero" }).click()

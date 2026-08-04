@@ -33,14 +33,14 @@ Estas comprobaciones siguen pendientes y deben realizarse en la laptop Windows 1
 - [ ] La misma captura permanece en la tarjeta de la cámara.
 - [ ] SmartStudio muestra primero el componente que llegue y asocia después el par por nombre base.
 - [ ] El JPEG real aparece como vista previa y el RAW queda marcado como asociado.
-- [ ] Determinar con hardware real cómo detectar que se desconectó el cable o se cerró Remote y mostrar una advertencia sin cancelar la sesión.
+- [ ] Determinar con hardware real cómo detectar que se desconectó el cable o se cerró Remote y mostrar una advertencia sin cancelar la sesión fotográfica.
 - [ ] La importación manual recupera el par desde una carpeta después de la desconexión.
 - [ ] El par real llega también al SSD y supera la verificación SHA-256.
 - [ ] Se registran tiempos de llegada de JPEG y RAW y cualquier restricción observada.
 
 ## Limitaciones conocidas antes de la prueba física
 
-- La carpeta solo incorpora archivos nuevos posteriores a su configuración; los archivos existentes se toman como línea base para evitar mezclar sesiones.
+- La carpeta solo incorpora archivos nuevos posteriores a su configuración; los archivos existentes se toman como línea base para evitar mezclar sesiones fotográficas.
 - Un archivo debe conservar el mismo tamaño y fecha de modificación durante dos comprobaciones consecutivas antes de incorporarse.
 - El emparejamiento depende de que RAW y JPEG compartan el mismo nombre base.
 - Imaging Edge Desktop es gratuito pero no es software de código abierto.

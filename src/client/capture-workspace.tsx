@@ -113,7 +113,7 @@ export function CaptureWorkspace({ series, session, busy, transition, execute, r
           </form>
           <div className="flex gap-2">
             <Button disabled={busy || series.captures.length === 0} onClick={() => transition("/api/series/close")}>Cerrar serie</Button>
-            <Button variant="outline" disabled={busy} onClick={() => transition("/api/sessions/cancel")}>Cancelar sesión</Button>
+            <Button variant="outline" disabled={busy} onClick={() => transition("/api/sessions/cancel")}>Cancelar sesión fotográfica</Button>
           </div>
         </div>
       )}
@@ -129,18 +129,18 @@ export function CaptureWorkspace({ series, session, busy, transition, execute, r
       {series.status !== "capturing" && (
         <div className="my-6 flex flex-wrap gap-2">
           <Button variant="secondary" disabled={busy} onClick={() => transition("/api/series")}>Iniciar otra serie</Button>
-          <Button variant="outline" disabled={busy} onClick={() => transition("/api/sessions/cancel")}>Cancelar sesión</Button>
+          <Button variant="outline" disabled={busy} onClick={() => transition("/api/sessions/cancel")}>Cancelar sesión fotográfica</Button>
           <Button variant="outline" onClick={() => setQualityOrder((current) => !current)}>
             {qualityOrder ? "Orden original" : "Ordenar por calidad"}
           </Button>
-          <Button disabled={busy || !selectionReady} onClick={() => transition("/api/sessions/complete")}>Finalizar sesión</Button>
+          <Button disabled={busy || !selectionReady} onClick={() => transition("/api/sessions/complete")}>Finalizar sesión fotográfica</Button>
         </div>
       )}
 
       {series.status !== "capturing" && (
         <Card size="sm" className={cn("mb-5", selectionReady ? "border-primary/50 bg-primary/5" : "bg-muted/20")}>
           <CardHeader>
-            <CardTitle>{selectionReady ? "Sesión lista para edición" : "Selección en curso"}</CardTitle>
+            <CardTitle>{selectionReady ? "Sesión fotográfica lista para edición" : "Selección en curso"}</CardTitle>
             <CardDescription>{selectedCaptures.length} de 3 seleccionadas · {selectedCaptures.some((capture) => capture.principal) ? "Principal definida" : "Falta definir la principal"}</CardDescription>
           </CardHeader>
           {selectedCaptures.length > 0 && (
@@ -169,7 +169,15 @@ export function CaptureWorkspace({ series, session, busy, transition, execute, r
           />
         ))}
       </div>
-      {session.series.length > 1 && <PreviousSeries series={session.series.slice(0, -1)} />}
+      {session.series.length > 1 && (
+        <PreviousSeries
+          series={session.series.slice(0, -1)}
+          busy={busy}
+          selectedCount={selectedCaptures.length}
+          reviewEnabled={series.status !== "capturing"}
+          transition={transition}
+        />
+      )}
     </section>
   )
 }

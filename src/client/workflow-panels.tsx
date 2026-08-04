@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import type { PhotoSession, Series } from "../shared/workflow.js"
+import { CaptureCard } from "./capture-card.js"
 
 export function Step({ number, label, complete }: { number: string; label: string; complete: boolean }) {
   return (
@@ -49,12 +50,12 @@ export function SessionHistory({
 }) {
   return (
     <section className="mt-7">
-      <h3 className="text-sm font-semibold">Historial de sesiones</h3>
+      <h3 className="text-sm font-semibold">Historial de sesiones fotográficas</h3>
       <div className="mt-3 grid gap-2">
         {sessions.toReversed().map((session) => (
           <Card key={session.id} size="sm" className="bg-background/35">
             <CardHeader>
-              <CardTitle>Sesión {session.number}{session.label ? ` · ${session.label}` : ""}</CardTitle>
+              <CardTitle>Sesión fotográfica {session.number}{session.label ? ` · ${session.label}` : ""}</CardTitle>
               <CardDescription>
                 {session.series.length} serie{session.series.length === 1 ? "" : "s"} · {session.status === "cancelled" ? "Cancelada" : "Finalizada"}
               </CardDescription>
@@ -91,34 +92,67 @@ export function SessionHistory({
   )
 }
 
-export function PreviousSeries({ series }: { series: Series[] }) {
+export function PreviousSeries({
+  series,
+  busy,
+  selectedCount,
+  reviewEnabled,
+  transition,
+}: {
+  series: Series[]
+  busy: boolean
+  selectedCount: number
+  reviewEnabled: boolean
+  transition: (path: string, body?: unknown) => void
+}) {
   return (
     <section className="mt-8 border-t border-border pt-6">
       <h3 className="text-sm font-semibold">Series anteriores</h3>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {series.toReversed().map((item) => (
-          <Card key={item.id} size="sm" className="bg-background/35">
-            <CardHeader>
-              <CardTitle>Serie {item.number}</CardTitle>
-              <CardDescription>{item.captures.length} captura{item.captures.length === 1 ? "" : "s"} conservada{item.captures.length === 1 ? "" : "s"}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex gap-2 overflow-x-auto">
-              {item.captures.map((capture) => (
-                capture.jpegRelativePath ? (
-                  <img
+          reviewEnabled ? (
+            <div key={item.id} className="sm:col-span-2 xl:col-span-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h4 className="text-sm font-medium">Serie {item.number}</h4>
+                <span className="text-xs text-muted-foreground">{item.captures.length} captura{item.captures.length === 1 ? "" : "s"} conservada{item.captures.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {item.captures.map((capture) => (
+                  <CaptureCard
                     key={capture.id}
-                    src={`/captures/${capture.id}/preview`}
-                    alt={`Vista previa anterior ${capture.baseName}`}
-                    className="aspect-3/2 w-24 shrink-0 rounded-md object-cover"
+                    capture={capture}
+                    seriesStatus={item.status}
+                    selectedCount={selectedCount}
+                    busy={busy}
+                    transition={transition}
                   />
-                ) : (
-                  <div key={capture.id} aria-label={`JPEG pendiente ${capture.baseName}`} className="grid aspect-3/2 w-24 shrink-0 place-items-center rounded-md bg-muted p-2 text-center text-xs text-muted-foreground">
-                    JPEG pendiente
-                  </div>
-                )
-              ))}
-            </CardContent>
-          </Card>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <Card key={item.id} size="sm" className="bg-background/35">
+              <CardHeader>
+                <CardTitle>Serie {item.number}</CardTitle>
+                <CardDescription>{item.captures.length} captura{item.captures.length === 1 ? "" : "s"} conservada{item.captures.length === 1 ? "" : "s"}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex gap-2 overflow-x-auto">
+                {item.captures.map((capture) => (
+                  capture.jpegRelativePath ? (
+                    <img
+                      key={capture.id}
+                      src={`/captures/${capture.id}/preview`}
+                      alt={`Vista previa anterior ${capture.baseName}`}
+                      className="aspect-3/2 w-24 shrink-0 rounded-md object-cover"
+                    />
+                  ) : (
+                    <div key={capture.id} aria-label={`JPEG pendiente ${capture.baseName}`} className="grid aspect-3/2 w-24 shrink-0 place-items-center rounded-md bg-muted p-2 text-center text-xs text-muted-foreground">
+                      JPEG pendiente
+                    </div>
+                  )
+                ))}
+              </CardContent>
+            </Card>
+          )
         ))}
       </div>
     </section>

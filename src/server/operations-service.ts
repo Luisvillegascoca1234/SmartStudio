@@ -109,7 +109,7 @@ export class OperationsService {
 
   async assertCanStartSession(): Promise<void> {
     if ((await this.snapshot()).blocksNewSession) {
-      throw new Error("El espacio interno es crítico. Conecta un SSD antes de iniciar otra sesión.")
+      throw new Error("El espacio interno es crítico. Conecta un SSD antes de iniciar otra sesión fotográfica.")
     }
   }
 

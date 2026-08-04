@@ -13,7 +13,7 @@ test("el operador completa el flujo simulado y lo recupera al reabrir la aplicac
     await application.reopen()
     await expect(application.page.getByRole("heading", { name: "Boda de prueba" })).toBeVisible()
 
-    await application.page.getByRole("button", { name: "Iniciar sesión" }).click()
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
     await application.reopen()
     await expect(application.page.getByRole("button", { name: "Iniciar serie" })).toBeVisible()
     await application.page.getByRole("button", { name: "Iniciar serie" }).click()

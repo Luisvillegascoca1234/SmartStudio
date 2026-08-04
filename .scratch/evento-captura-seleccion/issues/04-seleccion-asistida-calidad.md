@@ -14,5 +14,5 @@
 - [x] Una selección lista para edición exige exactamente una fotografía principal.
 - [x] El operador puede cambiar la principal sin perder las alternativas.
 - [x] Las fotografías no seleccionadas y excluidas continúan conservadas.
-- [x] La sesión muestra un estado inequívoco de lista para edición cuando cumple las reglas.
+- [x] La sesión fotográfica muestra un estado inequívoco de lista para edición cuando cumple las reglas.
 - [x] Las verificaciones incluyen fotografías controladas con distintos problemas y demuestran que la decisión final siempre pertenece al operador.

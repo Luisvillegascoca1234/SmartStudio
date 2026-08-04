@@ -138,7 +138,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     const current = store.snapshot()
     const event = activeEvent(current)
     if (!event) throw new Error("No existe un evento activo.")
-    if (activeSession(current)) throw new Error("Finaliza o cancela la sesión activa antes de cerrar el evento.")
+    if (activeSession(current)) throw new Error("Finaliza o cancela la sesión fotográfica activa antes de cerrar el evento.")
     return store.mutate((state) => {
       const currentEvent = activeEvent(state)!
       currentEvent.status = "closed"
@@ -152,7 +152,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     const current = store.snapshot()
     const event = activeEvent(current)
     if (!event) throw new Error("Primero crea o reabre un evento.")
-    if (activeSession(current)) throw new Error("Ya existe una sesión activa.")
+    if (activeSession(current)) throw new Error("Ya existe una sesión fotográfica activa.")
     return store.mutate((state) => {
       const currentEvent = activeEvent(state)!
       currentEvent.sessions.push({
@@ -169,7 +169,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
   })
 
   app.post("/api/sessions/cancel", async () => {
-    if (!activeSession(store.snapshot())) throw new Error("No existe una sesión activa.")
+    if (!activeSession(store.snapshot())) throw new Error("No existe una sesión fotográfica activa.")
     return store.mutate((state) => {
       const session = activeSession(state)!
       session.status = "cancelled"
@@ -181,9 +181,9 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     const current = store.snapshot()
     const event = activeEvent(current)
     if (!event) throw new Error("No existe un evento activo.")
-    if (activeSession(current)) throw new Error("Ya existe una sesión activa.")
+    if (activeSession(current)) throw new Error("Ya existe una sesión fotográfica activa.")
     const session = event.sessions.find((item) => item.id === request.params.id)
-    if (!session || session.status !== "cancelled") throw new Error("La sesión cancelada no existe.")
+    if (!session || session.status !== "cancelled") throw new Error("La sesión fotográfica cancelada no existe.")
     return store.mutate((state) => {
       const restored = activeEvent(state)!.sessions.find((item) => item.id === request.params.id)!
       restored.status = "active"
@@ -193,9 +193,9 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
 
   app.post("/api/sessions/complete", async () => {
     const session = activeSession(store.snapshot())
-    if (!session) throw new Error("No existe una sesión activa.")
+    if (!session) throw new Error("No existe una sesión fotográfica activa.")
     if (!sessionIsReadyForEditing(session)) {
-      throw new Error("La sesión necesita entre una y tres selecciones y exactamente una principal.")
+      throw new Error("La sesión fotográfica necesita entre una y tres selecciones y exactamente una principal.")
     }
     return store.mutate((state) => {
       const currentSession = activeSession(state)!
@@ -207,7 +207,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
   app.post("/api/series", async () => {
     const current = store.snapshot()
     const session = activeSession(current)
-    if (!session) throw new Error("Primero inicia o restaura una sesión.")
+    if (!session) throw new Error("Primero inicia o restaura una sesión fotográfica.")
     if (session.series.at(-1)?.status === "capturing") throw new Error("Ya existe una serie abierta.")
     return store.mutate((state) => {
       const currentSession = activeSession(state)!
@@ -250,6 +250,10 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     return captures.exclude(request.params.id)
   })
 
+  app.post<{ Params: { id: string } }>("/api/captures/:id/restore", async (request) => {
+    return captures.restore(request.params.id)
+  })
+
   app.post<{ Params: { id: string } }>("/api/captures/:id/authorize-jpeg", async (request) => {
     return captures.authorizeEmergencyJpeg(request.params.id)
   })
@@ -268,20 +272,21 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
   app.post<{ Params: { id: string } }>("/api/captures/:id/select", async (request) => {
     const series = activeSeries(store.snapshot())
     if (!series || series.status === "capturing") throw new Error("Cierra la serie antes de seleccionar.")
-    const selectedCapture = series.captures.find((capture) => capture.id === request.params.id)
+    const session = activeSession(store.snapshot())!
+    const selectedCapture = sessionCaptures(session).find((capture) => capture.id === request.params.id)
     if (!selectedCapture) {
-      throw new Error("La captura no existe en la serie activa.")
+      throw new Error("La captura no existe en la sesión fotográfica activa.")
     }
     if (selectedCapture.excluded) throw new Error("La captura está excluida de la revisión.")
     if (selectedCapture.status !== "complete" && !selectedCapture.emergencyJpegAuthorized) {
       throw new Error("La captura está incompleta.")
     }
-    const session = activeSession(store.snapshot())!
     if (!selectedCapture.selected && sessionCaptures(session).filter((capture) => capture.selected).length >= 3) {
       throw new Error("Solo puedes seleccionar hasta tres fotografías.")
     }
     return store.mutate((state) => {
-      const capture = activeSeries(state)!.captures.find((item) => item.id === request.params.id)!
+      const currentSession = activeSession(state)!
+      const capture = sessionCaptures(currentSession).find((item) => item.id === request.params.id)!
       capture.selected = true
     })
   })

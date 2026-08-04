@@ -81,7 +81,9 @@ export function CaptureCard({ capture, seriesStatus, selectedCount, busy, transi
         {capture.status === "raw-pending" && !capture.emergencyJpegAuthorized && (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => transition(`/api/captures/${capture.id}/authorize-jpeg`)}>Autorizar JPEG de emergencia</Button>
         )}
-        {!capture.excluded && (
+        {capture.excluded ? (
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => transition(`/api/captures/${capture.id}/restore`)}>Restaurar en revisión</Button>
+        ) : (
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => transition(`/api/captures/${capture.id}/exclude`)}>Excluir de revisión</Button>
         )}
       </CardContent>

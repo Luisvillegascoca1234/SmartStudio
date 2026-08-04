@@ -20,7 +20,7 @@ test("incorpora la carpeta de Imaging Edge y conserva la importación manual si 
     await application.page.getByRole("button", { name: "Conectar carpeta Sony" }).click()
     await expect(application.page.getByText("Carpeta de Imaging Edge disponible; conexión USB sin confirmar")).toBeVisible()
 
-    await application.page.getByRole("button", { name: "Iniciar sesión" }).click()
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
     await application.page.getByRole("button", { name: "Iniciar serie" }).click()
     const first = await prepareSimulatedPair({
       dataDirectory: fallbackDirectory,

@@ -8,7 +8,7 @@ import { TestApplication } from "./support/test-application.js"
 
 const GIBIBYTE = 1024 ** 3
 
-test("protege nuevas sesiones y verifica el respaldo externo sin detener la sesión activa", async ({ browser }) => {
+test("protege nuevas sesiones fotográficas y verifica el respaldo sin detener el trabajo activo", async ({ browser }) => {
   const application = await TestApplication.start(browser, "smartstudio-safety-", { testFeatures: true })
   const externalDirectory = await mkdtemp(path.join(tmpdir(), "smartstudio-ssd-"))
 
@@ -39,18 +39,18 @@ test("protege nuevas sesiones y verifica el respaldo externo sin detener la sesi
     await setConditions({ freeBytes: 50 * GIBIBYTE, power: "battery" })
     await reloadOperations()
     await expect(application.page.getByText("Espacio interno bajo")).toBeVisible()
-    await expect(application.page.getByRole("button", { name: "Iniciar sesión" })).toBeEnabled()
+    await expect(application.page.getByRole("button", { name: "Iniciar sesión fotográfica" })).toBeEnabled()
 
     await setConditions({ freeBytes: 5 * GIBIBYTE })
     await reloadOperations()
-    await expect(application.page.getByText("Espacio crítico: nueva sesión bloqueada")).toBeVisible()
-    await expect(application.page.getByRole("button", { name: "Iniciar sesión" })).toBeDisabled()
+    await expect(application.page.getByText("Espacio crítico: nueva sesión fotográfica bloqueada")).toBeVisible()
+    await expect(application.page.getByRole("button", { name: "Iniciar sesión fotográfica" })).toBeDisabled()
 
     await application.page.getByLabel("Ruta de carpeta del SSD").fill(externalDirectory)
     await application.page.getByRole("button", { name: "Configurar SSD" }).click()
     await expect(application.page.getByText("Disponible")).toBeVisible()
-    await expect(application.page.getByRole("button", { name: "Iniciar sesión" })).toBeEnabled()
-    await application.page.getByRole("button", { name: "Iniciar sesión" }).click()
+    await expect(application.page.getByRole("button", { name: "Iniciar sesión fotográfica" })).toBeEnabled()
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
     await application.page.getByRole("button", { name: "Iniciar serie" }).click()
     await application.page.getByRole("button", { name: "Simular captura RAW + JPEG" }).click()
     await expect(application.page.getByTestId("capture-SIM_S01_R01_001").getByText("RAW + JPEG asociados", { exact: false })).toBeVisible()
@@ -107,13 +107,13 @@ test("protege nuevas sesiones y verifica el respaldo externo sin detener la sesi
     await application.page.getByRole("button", { name: "Cerrar serie" }).click()
     await application.page.getByTestId("capture-SIM_S01_R01_001").getByRole("button", { name: "Seleccionar", exact: true }).click()
     await application.page.getByTestId("capture-SIM_S01_R01_001").getByRole("button", { name: "Marcar principal" }).click()
-    await application.page.getByRole("button", { name: "Finalizar sesión" }).click()
-    await expect(application.page.getByText("Espacio crítico: nueva sesión bloqueada")).toBeVisible()
-    await expect(application.page.getByRole("button", { name: "Iniciar sesión" })).toBeDisabled()
+    await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
+    await expect(application.page.getByText("Espacio crítico: nueva sesión fotográfica bloqueada")).toBeVisible()
+    await expect(application.page.getByRole("button", { name: "Iniciar sesión fotográfica" })).toBeDisabled()
 
     await application.reopen()
     await expect(application.page.getByText("Problema con el respaldo externo")).toBeVisible()
-    await expect(application.page.getByText("Sesión 1")).toBeVisible()
+    await expect(application.page.getByText("Sesión fotográfica 1")).toBeVisible()
   } finally {
     await application.close()
     await rm(externalDirectory, { recursive: true, force: true })

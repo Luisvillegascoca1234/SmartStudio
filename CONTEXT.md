@@ -23,8 +23,8 @@ Los detalles, excepciones y criterios de aceptación deberán resolverse mediant
 
 ## Flujo operativo confirmado
 
-- Solo puede existir una sesión operativa activa a la vez.
-- Una sesión puede contener varias series cortas de capturas.
+- Solo puede existir una sesión fotográfica operativa activa a la vez.
+- Una sesión fotográfica puede contener varias series cortas de capturas.
 - El operador inicia y cierra cada serie manualmente.
 - Después de revisar una serie, el operador selecciona hasta tres fotografías y marca exactamente una como principal.
 - La aplicación puede recomendar candidatas y advertir problemas de calidad, pero nunca selecciona, descarta ni elimina automáticamente.
@@ -60,10 +60,10 @@ La computadora de desarrollo secundaria utiliza Windows 10 Pro, Intel Core i7-10
 ## Vocabulario inicial
 
 - **Miniestudio:** instalación fotográfica temporal utilizada durante un evento.
-- **Evento:** contenedor operativo que agrupa configuración, sesiones, fotografías, respaldos y resultados de una boda o actividad.
-- **Sesión:** trabajo correspondiente a un grupo de invitados; recibe un número automático, hora y una etiqueta opcional.
-- **Serie:** conjunto corto de fotografías capturadas dentro de una sesión y cerrado manualmente por el operador para revisión.
-- **Fotografía principal:** fotografía seleccionada que representa la sesión y debe continuar al flujo de edición y aprobación.
+- **Evento:** contenedor operativo que agrupa configuración, sesiones fotográficas, fotografías, respaldos y resultados de una boda o actividad.
+- **Sesión fotográfica:** trabajo correspondiente a un grupo de invitados; recibe un número automático, hora y una etiqueta opcional.
+- **Serie:** conjunto corto de fotografías capturadas dentro de una sesión fotográfica y cerrado manualmente por el operador para revisión.
+- **Fotografía principal:** fotografía seleccionada que representa la sesión fotográfica y debe continuar al flujo de edición y aprobación.
 - **Fotografía alternativa:** una de hasta dos selecciones adicionales que puede procesarse o entregarse posteriormente.
 - **Operador:** persona que controla la aplicación, registra selecciones y confirma las acciones durante el evento.
 - **Captura simulada:** par RAW + JPEG incorporado desde una carpeta para reproducir el flujo sin conectar la cámara.

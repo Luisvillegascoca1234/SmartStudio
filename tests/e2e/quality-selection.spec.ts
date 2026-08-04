@@ -11,7 +11,7 @@ test("advierte problemas de calidad y mantiene la selección bajo control humano
   try {
     await application.page.getByLabel("Nombre del evento").fill("Calidad controlada")
     await application.page.getByRole("button", { name: "Crear evento" }).click()
-    await application.page.getByRole("button", { name: "Iniciar sesión" }).click()
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
     await application.page.getByRole("button", { name: "Iniciar serie" }).click()
     await application.page.getByRole("button", { name: "Cargar fotografías controladas" }).click()
     await application.page.getByRole("button", { name: "Cerrar serie" }).click()
@@ -45,7 +45,7 @@ test("advierte problemas de calidad y mantiene la selección bajo control humano
     ).toBeDisabled()
 
     await application.page.getByTestId("capture-SIM_S01_R01_001").getByRole("button", { name: "Marcar principal" }).click()
-    await expect(application.page.getByText("Sesión lista para edición")).toBeVisible()
+    await expect(application.page.getByText("Sesión fotográfica lista para edición")).toBeVisible()
     await application.page.getByRole("button", { name: "Hacer principal" }).first().click()
     await expect(application.page.getByText("3 de 3 seleccionadas")).toBeVisible()
     await expect(application.page.getByText("Principal definida")).toBeVisible()
@@ -57,7 +57,7 @@ test("advierte problemas de calidad y mantiene la selección bajo control humano
     await application.page.getByRole("button", { name: "Hacer principal" }).first().click()
 
     await application.reopen()
-    await expect(application.page.getByText("Sesión lista para edición")).toBeVisible()
+    await expect(application.page.getByText("Sesión fotográfica lista para edición")).toBeVisible()
     await expect(application.page.getByText("2 de 3 seleccionadas")).toBeVisible()
   } finally {
     await application.close()

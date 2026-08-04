@@ -4,7 +4,9 @@ import {
   activeSeries,
   activeSession,
   type Capture,
+  type PhotoSession,
   type QualityWarning,
+  type Series,
   type WorkflowState,
 } from "../shared/workflow.js"
 import { incorporateOriginal } from "./capture-ingestion.js"
@@ -47,8 +49,9 @@ export class CaptureService {
   }
 
   async completeSimulatedCapture(id: string): Promise<WorkflowState> {
-    const capture = activeSeries(this.store.snapshot())?.captures.find((item) => item.id === id)
-    if (!capture) throw new Error("La captura no existe en la serie activa.")
+    const located = this.findActiveCapture(this.store.snapshot(), id)
+    if (!located) throw new Error("La captura no existe en la sesión fotográfica activa.")
+    const { capture, series } = located
     if (capture.source !== "simulated-folder") {
       throw new Error("Solo las capturas simuladas pueden completar un componente de forma sintética.")
     }
@@ -58,10 +61,10 @@ export class CaptureService {
       capturedAt: capture.capturedAt,
     })
     if (!capture.jpegRelativePath) {
-      await this.incorporate(simulation.jpegPath, `${capture.baseName}.JPG`, "simulated-folder")
+      await this.incorporate(simulation.jpegPath, `${capture.baseName}.JPG`, "simulated-folder", series.id)
     }
     if (!capture.rawRelativePath) {
-      return this.incorporate(simulation.rawPath, `${capture.baseName}.ARW`, "simulated-folder")
+      return this.incorporate(simulation.rawPath, `${capture.baseName}.ARW`, "simulated-folder", series.id)
     }
     return this.store.snapshot()
   }
@@ -88,25 +91,38 @@ export class CaptureService {
   }
 
   async exclude(id: string): Promise<WorkflowState> {
-    const capture = activeSeries(this.store.snapshot())?.captures.find((item) => item.id === id)
-    if (!capture) throw new Error("La captura no existe en la serie activa.")
+    if (!this.findActiveCapture(this.store.snapshot(), id)) {
+      throw new Error("La captura no existe en la sesión fotográfica activa.")
+    }
     return this.store.mutate((state) => {
-      const item = activeSeries(state)!.captures.find((candidate) => candidate.id === id)!
+      const located = this.findActiveCapture(state, id)!
+      const item = located.capture
       item.excluded = true
       item.selected = false
       item.principal = false
-      const series = activeSeries(state)!
-      if (series.status === "selected") series.status = "review"
+      if (located.series.status === "selected") located.series.status = "review"
+      const currentSeries = activeSeries(state)
+      if (currentSeries?.status === "selected") currentSeries.status = "review"
+    })
+  }
+
+  async restore(id: string): Promise<WorkflowState> {
+    const located = this.findActiveCapture(this.store.snapshot(), id)
+    if (!located?.capture.excluded) {
+      throw new Error("La captura excluida no existe en la sesión fotográfica activa.")
+    }
+    return this.store.mutate((state) => {
+      this.findActiveCapture(state, id)!.capture.excluded = false
     })
   }
 
   async authorizeEmergencyJpeg(id: string): Promise<WorkflowState> {
-    const capture = activeSeries(this.store.snapshot())?.captures.find((item) => item.id === id)
-    if (!capture || capture.status !== "raw-pending") {
+    const located = this.findActiveCapture(this.store.snapshot(), id)
+    if (!located || located.capture.status !== "raw-pending") {
       throw new Error("Solo una captura con RAW pendiente puede autorizar JPEG de emergencia.")
     }
     return this.store.mutate((state) => {
-      activeSeries(state)!.captures.find((item) => item.id === id)!.emergencyJpegAuthorized = true
+      this.findActiveCapture(state, id)!.capture.emergencyJpegAuthorized = true
     })
   }
 
@@ -114,11 +130,14 @@ export class CaptureService {
     sourcePath: string,
     sourceFileName: string,
     source: Capture["source"],
+    targetSeriesId?: string,
   ): Promise<WorkflowState> {
     const current = this.store.snapshot()
     const event = activeEvent(current)
     const session = activeSession(current)
-    const series = activeSeries(current)
+    const series = targetSeriesId
+      ? session?.series.find((item) => item.id === targetSeriesId)
+      : activeSeries(current)
     if (!event || !session || !series) throw new Error("Abre una serie antes de incorporar capturas.")
     const component = await incorporateOriginal({
       dataDirectory: this.dataDirectory,
@@ -131,7 +150,10 @@ export class CaptureService {
       ? await assessJpeg(path.join(this.dataDirectory, component.relativePath))
       : null
     return this.store.mutate((state) => {
-      const currentSeries = activeSeries(state)!
+      const currentSession = activeSession(state)!
+      const currentSeries = targetSeriesId
+        ? currentSession.series.find((item) => item.id === targetSeriesId)!
+        : activeSeries(state)!
       let capture = currentSeries.captures.find(
         (item) => item.baseName.toLocaleLowerCase() === component.baseName.toLocaleLowerCase(),
       )
@@ -190,5 +212,18 @@ export class CaptureService {
     const capturedAt = new Date().toISOString()
     const paths = await prepareSimulatedPair({ dataDirectory: this.dataDirectory, baseName, capturedAt, profile })
     return { ...paths, baseName }
+  }
+
+  private findActiveCapture(
+    state: WorkflowState,
+    id: string,
+  ): { session: PhotoSession; series: Series; capture: Capture } | null {
+    const session = activeSession(state)
+    if (!session) return null
+    for (const series of session.series) {
+      const capture = series.captures.find((item) => item.id === id)
+      if (capture) return { session, series, capture }
+    }
+    return null
   }
 }

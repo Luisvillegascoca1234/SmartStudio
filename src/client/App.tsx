@@ -60,6 +60,7 @@ export function App() {
   const [sessionLabel, setSessionLabel] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [connectionAttempt, setConnectionAttempt] = useState(0)
   const { operations, busy: operationsBusy, configureBackup, configureSonySource, setSoundAlerts } = useOperations(setError)
   const currentEvent = useMemo(() => (state ? activeEvent(state) : null), [state])
   const currentSession = useMemo(() => (state ? activeSession(state) : null), [state])
@@ -72,13 +73,16 @@ export function App() {
   useEffect(() => {
     const refresh = () => fetch("/api/state")
       .then(async (response) => (await response.json()) as WorkflowState)
-      .then(setState)
-      .catch(() => setError("No se pudo abrir el estado local."))
+      .then((nextState) => {
+        setState(nextState)
+        setError(null)
+      })
+      .catch(() => setError("No se pudo conectar con el servidor local de SmartStudio."))
     void refresh()
     if (busy) return
     const interval = window.setInterval(refresh, WORKFLOW_REFRESH_INTERVAL_MILLISECONDS)
     return () => window.clearInterval(interval)
-  }, [busy])
+  }, [busy, connectionAttempt])
 
   const run = async (action: () => Promise<WorkflowState>) => {
     setBusy(true)
@@ -103,10 +107,32 @@ export function App() {
     )
   }
 
+  const startPhotoSession = () => {
+    void run(async () => {
+      const nextState = await postWorkflowTransition("/api/sessions", { label: sessionLabel })
+      setSessionLabel("")
+      return nextState
+    })
+  }
+
   if (!state) {
     return (
-      <main className="grid min-h-screen place-items-center bg-background text-muted-foreground">
-        Abriendo SmartStudio…
+      <main className="grid min-h-screen place-items-center bg-background p-4 text-muted-foreground">
+        {error ? (
+          <Alert variant="destructive" className="max-w-md bg-destructive/10" role="alert">
+            <CircleAlert />
+            <AlertTitle>No se pudo abrir SmartStudio</AlertTitle>
+            <AlertDescription className="space-y-3">
+              <p>{error}</p>
+              <Button variant="outline" onClick={() => {
+                setError(null)
+                setConnectionAttempt((current) => current + 1)
+              }}>
+                Reintentar conexión
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : "Abriendo SmartStudio…"}
       </main>
     )
   }
@@ -162,28 +188,28 @@ export function App() {
           <Alert className="mb-6 border-amber-500/35 bg-amber-500/10" role="alert">
             <HardDrive />
             <AlertTitle>El espacio interno está bajo</AlertTitle>
-            <AlertDescription>La sesión continúa. Finalízala normalmente y conecta o revisa el SSD antes de la siguiente.</AlertDescription>
+            <AlertDescription>La sesión fotográfica continúa. Finalízala normalmente y conecta o revisa el SSD antes de la siguiente.</AlertDescription>
           </Alert>
         )}
         {currentSession && operations?.internalStorage.level === "critical" && (
           <Alert variant="destructive" className="mb-6 bg-destructive/10" role="alert">
             <HardDrive />
             <AlertTitle>El espacio interno es crítico</AlertTitle>
-            <AlertDescription>Puedes terminar esta sesión; no se permitirá iniciar otra sin un SSD disponible y sin errores.</AlertDescription>
+            <AlertDescription>Puedes terminar esta sesión fotográfica; no se permitirá iniciar otra sin un SSD disponible y sin errores.</AlertDescription>
           </Alert>
         )}
         {currentSession && operations?.captureSource.configured && operations.captureSource.status === "unavailable" && (
           <Alert variant="destructive" className="mb-6 bg-destructive/10" role="alert">
             <Camera />
             <AlertTitle>Carpeta de recepción Sony no disponible</AlertTitle>
-            <AlertDescription>{operations.captureSource.label}. Puedes continuar con “Importar carpeta”; la sesión activa no se detiene.</AlertDescription>
+            <AlertDescription>{operations.captureSource.label}. Puedes continuar con “Importar carpeta”; la sesión fotográfica activa no se detiene.</AlertDescription>
           </Alert>
         )}
 
         <div className="grid gap-5 lg:grid-cols-[170px_minmax(0,1fr)] lg:gap-8">
           <aside className="grid grid-cols-4 lg:block" aria-label="Progreso">
             <Step number="01" label="Evento" complete={Boolean(currentEvent)} />
-            <Step number="02" label="Sesión" complete={Boolean(currentSession)} />
+            <Step number="02" label="Sesión fotográfica" complete={Boolean(currentSession)} />
             <Step number="03" label="Serie" complete={Boolean(series)} />
             <Step number="04" label="Selección" complete={selectionReady} />
           </aside>
@@ -237,7 +263,7 @@ export function App() {
                     <Card key={event.id} size="sm" className="bg-muted/25">
                       <CardHeader>
                         <CardTitle>{event.name}</CardTitle>
-                        <CardDescription>{formatDate(event.createdAt)} · {event.sessions.length} sesión{event.sessions.length === 1 ? "" : "es"}</CardDescription>
+                        <CardDescription>{formatDate(event.createdAt)} · {event.sessions.length} {event.sessions.length === 1 ? "sesión fotográfica" : "sesiones fotográficas"}</CardDescription>
                       </CardHeader>
                       <CardContent>
                         <Button size="sm" variant="secondary" onClick={() => void run(() => postWorkflowTransition(`/api/events/${event.id}/reopen`))}>
@@ -281,17 +307,17 @@ export function App() {
                       configureBackup={(directory) => void configureBackup(directory)}
                       configureSonySource={(directory) => void configureSonySource(directory)}
                     />
-                    <ActionCard title="La cabina está preparada" copy="Inicia la única sesión activa del evento." icon={<Camera />}>
+                    <ActionCard title="La cabina está preparada" copy="Inicia la única sesión fotográfica activa del evento." icon={<Camera />}>
                       <div className="flex flex-col gap-2 sm:flex-row">
                         <Input
-                          aria-label="Etiqueta de la sesión"
+                          aria-label="Etiqueta de la sesión fotográfica"
                           value={sessionLabel}
                           onChange={(event) => setSessionLabel(event.target.value)}
                           placeholder="Etiqueta opcional"
                           className="h-8 w-44 bg-background"
                         />
-                        <Button disabled={busy || operationsBusy || !operations || operations.blocksNewSession} onClick={() => void run(() => postWorkflowTransition("/api/sessions", { label: sessionLabel }))}>
-                          Iniciar sesión
+                        <Button disabled={busy || operationsBusy || !operations || operations.blocksNewSession} onClick={startPhotoSession}>
+                          Iniciar sesión fotográfica
                         </Button>
                       </div>
                     </ActionCard>
@@ -306,9 +332,9 @@ export function App() {
                 )}
 
                 {currentSession && !series && (
-                  <ActionCard title={`Sesión ${currentSession.number} activa`} copy={currentSession.label ?? "Abre una serie corta antes de comenzar a capturar."} icon={<ImageIcon />}>
+                  <ActionCard title={`Sesión fotográfica ${currentSession.number} activa`} copy={currentSession.label ?? "Abre una serie corta antes de comenzar a capturar."} icon={<ImageIcon />}>
                     <div className="flex gap-2">
-                      <Button variant="outline" disabled={busy} onClick={() => void run(() => postWorkflowTransition("/api/sessions/cancel"))}>Cancelar sesión</Button>
+                      <Button variant="outline" disabled={busy} onClick={() => void run(() => postWorkflowTransition("/api/sessions/cancel"))}>Cancelar sesión fotográfica</Button>
                       <Button disabled={busy} onClick={() => void run(() => postWorkflowTransition("/api/series"))}>
                         Iniciar serie
                       </Button>
