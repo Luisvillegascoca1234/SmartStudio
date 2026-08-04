@@ -1,5 +1,5 @@
-import { type FormEvent, useMemo, useState } from "react"
-import { CircleAlert, FolderInput } from "lucide-react"
+import { type FormEvent, useMemo, useRef, useState } from "react"
+import { CircleAlert, FolderInput, Upload } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -32,9 +32,12 @@ const EXCLUDED_QUALITY_PENALTY = 100
 export function CaptureWorkspace({ series, session, busy, transition, execute, reportError }: Props) {
   const [importFiles, setImportFiles] = useState<FileList | null>(null)
   const [qualityOrder, setQualityOrder] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
   const selectedCaptures = sessionCaptures(session).filter((capture) => capture.selected)
   const selectionReady = sessionIsReadyForEditing(session)
-  const showQualityFixtures = new URLSearchParams(window.location.search).has("quality-fixtures")
+  const searchParameters = new URLSearchParams(window.location.search)
+  const showSimulatedControls = searchParameters.has("simulated-controls")
+  const showQualityFixtures = searchParameters.has("quality-fixtures")
   const visibleCaptures = useMemo(
     () => qualityOrder
       ? series.captures.toSorted((left, right) => {
@@ -78,37 +81,53 @@ export function CaptureWorkspace({ series, session, busy, transition, execute, r
 
       {series.status === "capturing" && (
         <div className="my-6 grid gap-3">
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => transition("/api/simulated-captures")}>
-              <FolderInput data-icon="inline-start" />
-              Simular captura RAW + JPEG
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => transition("/api/simulated-captures/jpeg-first")}>
-              Simular JPEG primero
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => transition("/api/simulated-captures/raw-first")}>
-              Simular RAW primero
-            </Button>
-            {showQualityFixtures && (
-              <Button variant="outline" disabled={busy} onClick={() => transition("/api/simulated-captures/quality-fixtures")}>
-                Cargar fotografías controladas
+          {showSimulatedControls && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" disabled={busy} onClick={() => transition("/api/simulated-captures")}>
+                <FolderInput data-icon="inline-start" />
+                Simular captura RAW + JPEG
               </Button>
-            )}
-          </div>
-          <form onSubmit={importSelectedFiles} className="grid gap-2 rounded-lg border border-border bg-background/35 p-3 sm:grid-cols-[1fr_auto]">
+              <Button variant="outline" disabled={busy} onClick={() => transition("/api/simulated-captures/jpeg-first")}>
+                Simular JPEG primero
+              </Button>
+              <Button variant="outline" disabled={busy} onClick={() => transition("/api/simulated-captures/raw-first")}>
+                Simular RAW primero
+              </Button>
+              {showQualityFixtures && (
+                <Button variant="outline" disabled={busy} onClick={() => transition("/api/simulated-captures/quality-fixtures")}>
+                  Cargar fotografías controladas
+                </Button>
+              )}
+            </div>
+          )}
+          <form onSubmit={importSelectedFiles} className="grid gap-3 rounded-lg border border-border bg-background/35 p-3">
             <Input
+              type="text"
+              readOnly
+              aria-label="Archivos seleccionados"
+              value={importFiles?.length ? Array.from(importFiles).map((file) => file.name).join(" · ") : ""}
+              placeholder="Ningún archivo seleccionado"
+              className="bg-background"
+            />
+            <input
+              ref={importInputRef}
+              id={`capture-files-${series.id}`}
               type="file"
               multiple
               accept=".arw,.cr2,.jpg,.jpeg,image/jpeg"
               aria-label="Archivos RAW y JPEG"
               onChange={(event) => setImportFiles(event.target.files)}
-              className="h-8 bg-background file:text-foreground"
+              className="sr-only"
             />
-            <Button type="submit" size="sm" variant="secondary" disabled={busy}>Importar archivos</Button>
-            <p className="text-xs text-muted-foreground sm:col-span-2">
-              {importFiles?.length
-                ? `Seleccionados: ${Array.from(importFiles).map((file) => file.name).join(" · ")}`
-                : "Elige directamente el ARW o CR2 y su JPG/JPEG. Puedes seleccionar ambos a la vez."}
+            <div className="flex items-center justify-between gap-3">
+              <Button type="button" size="sm" variant="outline" className="border-sky-500/60 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:text-sky-200" onClick={() => importInputRef.current?.click()}>
+                <Upload data-icon="inline-start" />
+                Subir archivo
+              </Button>
+              <Button type="submit" size="sm" disabled={busy}>Importar archivos</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Elige directamente el ARW o CR2 y su JPG/JPEG. Puedes seleccionar ambos a la vez.
             </p>
           </form>
           <div className="flex gap-2">

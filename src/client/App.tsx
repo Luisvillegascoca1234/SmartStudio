@@ -87,6 +87,16 @@ export function App() {
     () => eventEditingJobs.some((job) => job.status === "approved"),
     [eventEditingJobs],
   )
+  const currentStep = useMemo(() => {
+    if (!currentEvent) return "event"
+    if (currentSession) {
+      if (!series || series.status === "capturing") return "series"
+      if (!selectionReady) return "selection"
+      return "editing"
+    }
+    if (eventEditingJobs.some((job) => job.status !== "approved" && job.status !== "cancelled")) return "editing"
+    return "session"
+  }, [currentEvent, currentSession, eventEditingJobs, selectionReady, series])
 
   useEffect(() => {
     const refresh = () => fetch("/api/state")
@@ -224,13 +234,13 @@ export function App() {
           </Alert>
         )}
 
-        <div className="grid gap-5 lg:grid-cols-[170px_minmax(0,1fr)] lg:gap-8">
+        <div className="grid gap-5 lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-8">
           <aside className="grid grid-cols-5 lg:block" aria-label="Progreso">
-            <Step number="01" label="Evento" complete={Boolean(currentEvent)} />
-            <Step number="02" label="Sesión fotográfica" complete={Boolean(currentSession)} />
-            <Step number="03" label="Serie" complete={Boolean(series)} />
-            <Step number="04" label="Selección" complete={selectionReady} />
-            <Step number="05" label="Edición" complete={editingComplete} />
+            <Step number="01" label="Evento" complete={Boolean(currentEvent)} active={currentStep === "event"} />
+            <Step number="02" label="Sesión fotográfica" complete={Boolean(currentSession)} active={currentStep === "session"} />
+            <Step number="03" label="Serie" complete={Boolean(series && series.status !== "capturing")} active={currentStep === "series"} />
+            <Step number="04" label="Selección" complete={selectionReady} active={currentStep === "selection"} />
+            <Step number="05" label="Edición" complete={editingComplete} active={currentStep === "editing"} />
           </aside>
 
           <Card className="min-h-[540px] border-border/80 bg-card/90 shadow-2xl shadow-black/20 backdrop-blur">

@@ -75,6 +75,8 @@ export class TestApplication {
     this.address = await this.server.listen({ host: "127.0.0.1", port: 0 })
     this.context = await this.browser.newContext()
     this.page = await this.context.newPage()
-    await this.page.goto(`${this.address}${this.options.path ?? ""}`)
+    const destination = new URL(this.options.path ?? "/", `${this.address}/`)
+    destination.searchParams.set("simulated-controls", "1")
+    await this.page.goto(destination.toString())
   }
 }

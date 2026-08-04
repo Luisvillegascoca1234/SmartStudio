@@ -15,14 +15,23 @@ import type { EditingJob, PhotoSession, Series } from "../shared/workflow.js"
 import { CaptureCard } from "./capture-card.js"
 import { editingStatusPresentation } from "./editing-presentation.js"
 
-export function Step({ number, label, complete }: { number: string; label: string; complete: boolean }) {
+export function Step({ number, label, complete, active = false }: { number: string; label: string; complete: boolean; active?: boolean }) {
   return (
-    <div className={cn("relative flex min-h-16 flex-col items-center gap-1 text-xs text-muted-foreground lg:flex-row lg:gap-3 lg:text-sm", complete && "text-primary")}>
-      <span className={cn("grid size-8 shrink-0 place-items-center rounded-full border border-border bg-background text-[11px] font-semibold", complete && "border-primary bg-primary text-primary-foreground")}>
-        {complete ? <Check className="size-4" /> : number}
-      </span>
-      <p className="font-medium">{label}</p>
-      <span className="absolute left-4 top-12 hidden h-5 w-px bg-border lg:block last:hidden" />
+    <div aria-current={active ? "step" : undefined} className={cn("relative flex min-h-16 flex-col items-center text-xs text-muted-foreground lg:items-start lg:text-sm", complete && "text-primary")}>
+      <div className={cn(
+        "flex flex-col items-center gap-1 rounded-xl border border-transparent px-2 py-1.5 lg:flex-row lg:gap-3",
+        active && "border-red-500 bg-red-500/10 text-red-400 shadow-sm shadow-red-950/40",
+      )}>
+        <span className={cn(
+          "grid size-8 shrink-0 place-items-center rounded-full border border-border bg-background text-[11px] font-semibold",
+          complete && "border-primary bg-primary text-primary-foreground",
+          active && "border-red-500 text-red-400",
+        )}>
+          {complete ? <Check className="size-4" /> : number}
+        </span>
+        <p className="font-medium">{label}</p>
+      </div>
+      <span className="absolute left-6 top-12 hidden h-5 w-px bg-border lg:block last:hidden" />
     </div>
   )
 }
