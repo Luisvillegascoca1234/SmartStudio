@@ -1,0 +1,18 @@
+{
+  "contractVersion": 1,
+  "bundle": "SmartStudio Natural Adobe",
+  "version": "1.0.0",
+  "preset": "SmartStudio-Natural-v1.xmp",
+  "presetVersion": "1.0.0",
+  "actionSet": "Ungrouped Actions",
+  "action": "SmartStudio-Natural",
+  "actionVersion": "1.0.0",
+  "backdropAction": "SmartStudio-Fondo",
+  "backdropActionVersion": "1.0.0",
+  "backdropScript": "SmartStudio Fondo.jsx",
+  "script": "SmartStudio Natural.jsx",
+  "droplet": "SmartStudio-Natural.exe",
+  "dropletVersion": "1.0.0",
+  "generativeFeaturesRequired": false,
+  "lightroomRequired": false
+}

@@ -32,7 +32,7 @@ test("trata localmente rostros grupales diversos sin modificar geometría ni el 
     const before = await sharp(source).removeAlpha().raw().toBuffer({ resolveWithObject: true })
     const result = await new PortraitRetoucher().apply(source, destination, 1, { kind: "group", faceCount: 3 })
     const after = await sharp(destination).removeAlpha().raw().toBuffer({ resolveWithObject: true })
-    expect(result).toMatchObject({ faces: 3, treated: 3, warnings: [] })
+    expect(result).toMatchObject({ faces: 3, treated: 3, eyesEnhanced: true, teethWhitened: true, warnings: [] })
     expect(after.info.width).toBe(before.info.width)
     expect(after.info.height).toBe(before.info.height)
     expect(after.data.subarray(0, 3)).toEqual(before.data.subarray(0, 3))
@@ -42,7 +42,7 @@ test("trata localmente rostros grupales diversos sin modificar geometría ni el 
   }
 })
 
-test("omite el retoque cuando no detecta rostros y conserva el archivo", async () => {
+test("aplica revelado adaptativo aunque no detecte rostros y omite solo el retoque facial", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-portrait-none-"))
   try {
     const source = path.join(directory, "none.png")
@@ -50,8 +50,16 @@ test("omite el retoque cuando no detecta rostros y conserva el archivo", async (
     await sharp({ create: { width: 500, height: 300, channels: 3, background: "#24404d" } }).png().toFile(source)
     const result = await new PortraitRetoucher().apply(source, destination, 2)
     expect(result.faces).toBe(0)
+    expect(result.eyesEnhanced).toBe(false)
+    expect(result.teethWhitened).toBe(false)
     expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining("No se detectaron rostros")]))
-    expect(await readFile(destination)).toEqual(await readFile(source))
+    expect(result.adaptiveTone).toMatchObject({
+      exposureEv: expect.any(Number),
+      luminanceBefore: expect.any(Number),
+      luminanceAfter: expect.any(Number),
+    })
+    expect(result.adaptiveTone!.luminanceAfter).toBeGreaterThan(result.adaptiveTone!.luminanceBefore)
+    expect(await readFile(destination)).not.toEqual(await readFile(source))
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -65,6 +73,8 @@ test("advierte y omite ojos y dientes cuando la detección controlada es inciert
     await sharp({ create: { width: 600, height: 500, channels: 3, background: "#87624f" } }).png().toFile(source)
     const result = await new PortraitRetoucher().apply(source, destination, 1, { kind: "uncertain" })
     expect(result.faces).toBe(1)
+    expect(result.eyesEnhanced).toBe(false)
+    expect(result.teethWhitened).toBe(false)
     expect(result.warnings).toEqual(expect.arrayContaining([
       expect.stringContaining("ojos con confianza"),
       expect.stringContaining("dientes con confianza"),
@@ -99,6 +109,39 @@ test("completa un fondo uniforme interrumpido sin modificar la persona protegida
   }
 })
 
+test("usa el fondo superior y conserva flores al completar una franja ajena al fondo", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-backdrop-flowers-"))
+  try {
+    const source = path.join(directory, "flowers.png")
+    const destination = path.join(directory, "completed.png")
+    const svg = `<svg width="900" height="600" xmlns="http://www.w3.org/2000/svg">
+      <rect width="900" height="600" fill="#078fc8"/>
+      <rect width="900" height="82" fill="#d9dde0"/>
+      <ellipse cx="450" cy="360" rx="145" ry="220" fill="#b97852"/>
+      <path d="M95 600L165 285M135 600L225 315M175 600L285 350" stroke="#426b36" stroke-width="9"/>
+      <circle cx="165" cy="285" r="38" fill="#f6f4e9"/>
+      <circle cx="225" cy="315" r="32" fill="#f6f4e9"/>
+      <circle cx="285" cy="350" r="28" fill="#f6f4e9"/>
+    </svg>`
+    await sharp(Buffer.from(svg)).png().toFile(source)
+    const before = await sharp(source).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const result = await new PortraitRetoucher().apply(source, destination, 0, { kind: "backdrop" })
+    const after = await sharp(destination).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const pixel = (data: Buffer, x: number, y: number) => data.subarray((y * 900 + x) * 3, (y * 900 + x) * 3 + 3)
+    expect(result.backdrop).toBe("completed")
+    expect(result.backdropDiagnostics).toMatchObject({ confidence: "high" })
+    expect(result.backdropDiagnostics!.referencePercent).toBeGreaterThan(20)
+    expect(result.backdropDiagnostics!.replacementPercent).toBeGreaterThan(5)
+    expect(pixel(after.data, 100, 30)).not.toEqual(pixel(before.data, 100, 30))
+    expect(pixel(after.data, 165, 285)).toEqual(pixel(before.data, 165, 285))
+    expect(pixel(after.data, 450, 360)).toEqual(pixel(before.data, 450, 360))
+    expect(await readFile(path.join(directory, "completed-backdrop-diagnostics", "replacement.png"))).not.toHaveLength(0)
+    expect(JSON.parse(await readFile(path.join(directory, "completed-backdrop-diagnostics", "summary.json"), "utf8"))).toMatchObject({ confidence: "high" })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("omite el completado cuando el fondo no es uniforme", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-backdrop-uncertain-"))
   try {
@@ -112,6 +155,30 @@ test("omite el completado cuando el fondo no es uniforme", async () => {
     expect(result.backdrop).toBe("omitted")
     expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining("uniforme")]))
     expect(await readFile(destination)).toEqual(await readFile(source))
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("uniformiza una pared neutra texturizada sin modificar la persona", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-backdrop-cleanup-"))
+  try {
+    const source = path.join(directory, "textured.png")
+    const destination = path.join(directory, "cleaned.png")
+    const texture = Array.from({ length: 10 }, (_, row) => Array.from({ length: 15 }, (_, column) => {
+      const shade = 105 + ((row * 7 + column * 11) % 42)
+      return `<circle cx="${column * 65 + 20}" cy="${row * 65 + 20}" r="46" fill="rgb(${shade},${shade},${shade})" opacity="0.48"/>`
+    }).join("")).join("")
+    const svg = `<svg width="900" height="600" xmlns="http://www.w3.org/2000/svg"><rect width="900" height="600" fill="#818181"/>${texture}<ellipse cx="450" cy="350" rx="135" ry="215" fill="#b97852"/></svg>`
+    await sharp(Buffer.from(svg)).png().toFile(source)
+    const before = await sharp(source).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const result = await new PortraitRetoucher().apply(source, destination, 0, { kind: "backdrop" })
+    const after = await sharp(destination).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const pixel = (data: Buffer, x: number, y: number) => data.subarray((y * 900 + x) * 3, (y * 900 + x) * 3 + 3)
+    expect(result.backdrop).toBe("completed")
+    expect(result.backdropDiagnostics).toMatchObject({ confidence: "high", reason: expect.stringContaining("uniformizó") })
+    expect(pixel(after.data, 100, 100)).not.toEqual(pixel(before.data, 100, 100))
+    expect(pixel(after.data, 450, 350)).toEqual(pixel(before.data, 450, 350))
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -155,7 +222,7 @@ test("no confunde una pared dominante con el fondo uniforme minoritario", async 
   }
 })
 
-test("mantiene el completado en la vista previa y el JPEG completo aprobado", async ({ browser }) => {
+test("Natural conserva el fondo y mantiene el retoque en la vista previa y el JPEG aprobado", async ({ browser }) => {
   const application = await TestApplication.start(browser, "smartstudio-backdrop-flow-", {
     testFeatures: true,
     controlledPortraitFixture: { kind: "backdrop" },
@@ -176,9 +243,9 @@ test("mantiene el completado en la vista previa y el JPEG completo aprobado", as
     await application.page.getByRole("button", { name: "Marcar principal" }).click()
     await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
     const card = application.page.getByTestId(`editing-job-${capture.baseName}`)
-    await expect(card.getByText("Fondo: completado", { exact: true })).toBeVisible()
+    await expect(card.getByText("Fondo: sin cambios", { exact: true })).toBeVisible()
     state = await application.state()
-    expect(state.editingJobs[0].backdropCompletion).toBe("completed")
+    expect(state.editingJobs[0].backdropCompletion).toBe("unchanged")
     const preview = await application.readDataFile(state.editingJobs[0].previewRelativePath!)
 
     await card.getByRole("button", { name: "Aprobar edición" }).click()
@@ -192,10 +259,10 @@ test("mantiene el completado en la vista previa y el JPEG completo aprobado", as
       sampleRgb(preview, .12, .1),
       sampleRgb(delivery, .12, .1),
     ])
-    expect(colorDistance(originalTop, previewTop)).toBeGreaterThan(12)
+    expect(colorDistance(originalTop, previewTop)).toBeLessThan(3)
     expect(colorDistance(previewTop, deliveryTop)).toBeLessThan(12)
     await application.reopen()
-    expect((await application.state()).editingJobs[0].backdropCompletion).toBe("completed")
+    expect((await application.state()).editingJobs[0].backdropCompletion).toBe("unchanged")
   } finally {
     await application.close()
   }
@@ -223,6 +290,8 @@ test("expone niveles conservadores y análisis facial en el flujo visible", asyn
     await slider.fill("2")
     await expect(application.page.getByText("Medio", { exact: true })).toBeVisible()
     await expect(application.page.getByText("Detección local sin identificación", { exact: false })).toBeVisible()
+    await expect(application.page.getByText("Ojos: mejorados", { exact: true })).toBeVisible()
+    await expect(application.page.getByText("Dientes: mejorados", { exact: true })).toBeVisible()
   } finally {
     await application.close()
   }

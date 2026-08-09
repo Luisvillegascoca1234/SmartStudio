@@ -4,7 +4,7 @@ import { access, copyFile, mkdir, readFile, readdir, rename, stat, statfs, write
 import path from "node:path"
 import { promisify } from "node:util"
 
-import type { OperationsSnapshot } from "../shared/operations.js"
+import type { AdobeReadiness, OperationsSnapshot } from "../shared/operations.js"
 import { sha256File } from "./file-hash.js"
 
 const GIBIBYTE = 1024 ** 3
@@ -52,6 +52,11 @@ export class OperationsService {
     configured: false,
   })
   private backupResultListener: ((result: { status: "verified" | "failed"; relativePaths: string[]; error: string | null }) => void) | null = null
+  private adobeReadinessProvider: () => Promise<AdobeReadiness> = async () => ({
+    status: "unavailable",
+    checkedAt: new Date().toISOString(),
+    checks: [],
+  })
 
   constructor(
     private readonly dataDirectory: string,
@@ -79,6 +84,7 @@ export class OperationsService {
     const detectedSource = this.captureSourceProvider()
     const source = this.testConditions.captureSource ?? detectedSource.status
     return {
+      adobe: await this.adobeReadinessProvider(),
       captureSource: {
         status: source,
         label: this.testConditions.captureSource
@@ -107,6 +113,10 @@ export class OperationsService {
 
   setCaptureSourceProvider(provider: () => { status: "ready" | "unavailable"; label: string; configured: boolean }): void {
     this.captureSourceProvider = provider
+  }
+
+  setAdobeReadinessProvider(provider: () => Promise<AdobeReadiness>): void {
+    this.adobeReadinessProvider = provider
   }
 
   onBackupResult(listener: (result: { status: "verified" | "failed"; relativePaths: string[]; error: string | null }) => void): void {
@@ -233,6 +243,8 @@ export class OperationsService {
       }
     }
     await visit(path.join(this.dataDirectory, "events"))
+    await visit(path.join(this.dataDirectory, "manual-corrections"))
+    await visit(path.join(this.dataDirectory, "adobe-resources", "archive"))
     try {
       await access(path.join(this.dataDirectory, "workflow-state.json"))
       files.push(path.join(this.dataDirectory, "workflow-state.json"))

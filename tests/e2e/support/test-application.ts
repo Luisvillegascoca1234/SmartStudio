@@ -1,20 +1,27 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { FastifyInstance } from "fastify"
 import type { Browser, BrowserContext, Page } from "@playwright/test"
 
 import { createSmartStudioServer } from "../../../src/server/app.js"
+import type { EditingEngine } from "../../../src/server/editing-engine.js"
 import type { WorkflowState } from "../../../src/shared/workflow.js"
 import type { PortraitFixture } from "../../../src/server/portrait-retoucher.js"
 import type { SimulationProfile } from "../../../src/server/simulator.js"
+import type { AdobeReadiness } from "../../../src/shared/operations.js"
 
 type TestApplicationOptions = {
   testFeatures?: boolean
   path?: string
   editingProcessingDelayMilliseconds?: number
+  editingTimeoutMilliseconds?: number
+  editingDelayWarningMilliseconds?: number
   controlledPortraitFixture?: PortraitFixture
   simulatedCaptureProfile?: SimulationProfile
+  editingEngine?: EditingEngine
+  editingEngineFactory?: (dataDirectory: string) => EditingEngine
+  adobeReadinessProvider?: () => Promise<AdobeReadiness>
 }
 
 export class TestApplication {
@@ -46,6 +53,15 @@ export class TestApplication {
     await this.open()
   }
 
+  async rewritePersistedState(transform: (state: Record<string, unknown>) => Record<string, unknown>): Promise<void> {
+    await this.context.close()
+    await this.server.close()
+    const statePath = path.join(this.dataDirectory, "workflow-state.json")
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>
+    await writeFile(statePath, `${JSON.stringify(transform(state), null, 2)}\n`, "utf8")
+    await this.open()
+  }
+
   async close(): Promise<void> {
     await this.context.close().catch(() => undefined)
     await this.server.close().catch(() => undefined)
@@ -63,14 +79,32 @@ export class TestApplication {
     return readFile(path.join(this.dataDirectory, relativePath))
   }
 
+  async listDataFiles(relativeDirectory: string): Promise<string[]> {
+    const root = path.join(this.dataDirectory, relativeDirectory)
+    const files: string[] = []
+    const visit = async (directory: string) => {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const entryPath = path.join(directory, entry.name)
+        if (entry.isDirectory()) await visit(entryPath)
+        else files.push(path.relative(root, entryPath))
+      }
+    }
+    await visit(root)
+    return files
+  }
+
   private async open(): Promise<void> {
     this.server = await createSmartStudioServer({
       dataDirectory: this.dataDirectory,
       staticDirectory: path.resolve("dist/client"),
       testFeatures: this.options.testFeatures,
       editingProcessingDelayMilliseconds: this.options.editingProcessingDelayMilliseconds,
+      editingTimeoutMilliseconds: this.options.editingTimeoutMilliseconds,
+      editingDelayWarningMilliseconds: this.options.editingDelayWarningMilliseconds,
       controlledPortraitFixture: this.options.controlledPortraitFixture,
       simulatedCaptureProfile: this.options.simulatedCaptureProfile,
+      editingEngine: this.options.editingEngineFactory?.(this.dataDirectory) ?? this.options.editingEngine,
+      adobeReadinessProvider: this.options.adobeReadinessProvider,
     })
     this.address = await this.server.listen({ host: "127.0.0.1", port: 0 })
     this.context = await this.browser.newContext()

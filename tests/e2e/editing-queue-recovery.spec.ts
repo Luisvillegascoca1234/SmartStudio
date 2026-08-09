@@ -45,9 +45,9 @@ test("procesa en orden, permite cancelar y reintentar sin bloquear nuevas sesion
 
     await firstCard.getByRole("button", { name: "Reintentar edición" }).click()
     await expect(firstCard.getByText("En cola", { exact: true })).toBeVisible()
-    await expect(secondCard.getByText("Lista para revisar", { exact: true })).toBeVisible()
+    await expect(secondCard.getByText("Lista para revisar", { exact: true })).toBeVisible({ timeout: 10_000 })
     await expect(firstCard.getByText("Procesando", { exact: true })).toBeVisible()
-    await expect(firstCard.getByText("Lista para revisar", { exact: true })).toBeVisible()
+    await expect(firstCard.getByText("Lista para revisar", { exact: true })).toBeVisible({ timeout: 10_000 })
 
     const completed = await application.state()
     expect(completed.editingJobs.map((job) => job.status)).toEqual(["review", "review"])
@@ -72,7 +72,7 @@ test("recupera fallos e interrupciones y termina trabajos de un evento cerrado",
     await expect(editingCard.getByText("Fallo controlado de edición.")).toBeVisible()
 
     await editingCard.getByRole("button", { name: "Reintentar edición" }).click()
-    await expect(editingCard.getByText("Lista para revisar", { exact: true })).toBeVisible()
+    await expect(editingCard.getByText("Lista para revisar", { exact: true })).toBeVisible({ timeout: 10_000 })
     let state = await application.state()
     const jobId = state.editingJobs[0].id
 

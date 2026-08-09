@@ -1,7 +1,21 @@
 export type CapacityLevel = "sufficient" | "low" | "critical"
 export type BackupStatus = "not-configured" | "ready" | "copying" | "verified" | "error" | "disconnected"
 
+export type AdobeReadinessCheck = {
+  id: "photoshop" | "camera-raw" | "preset" | "droplet" | "action" | "exchange" | "offline-resources"
+  label: string
+  ready: boolean
+  detail: string
+}
+
+export type AdobeReadiness = {
+  status: "ready" | "unavailable"
+  checkedAt: string
+  checks: AdobeReadinessCheck[]
+}
+
 export type OperationsSnapshot = {
+  adobe: AdobeReadiness
   captureSource: {
     status: "ready" | "unavailable"
     label: string

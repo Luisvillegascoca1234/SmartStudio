@@ -8,6 +8,30 @@ export type QualityWarning =
 
 export const BACKDROP_COMPLETION_VALUES = ["completed", "unchanged", "omitted"] as const
 export type BackdropCompletion = typeof BACKDROP_COMPLETION_VALUES[number]
+export type ProcessingRoute = "cpu" | "gpu" | "hybrid"
+export type BackdropDiagnostics = {
+  analysisWidth: number
+  analysisHeight: number
+  backgroundPercent: number
+  referencePercent: number
+  protectedPercent: number
+  replacementPercent: number
+  referenceSpanWidthPercent: number
+  referenceSpanHeightPercent: number
+  confidence: "high" | "low"
+  reason: string
+}
+export type AdaptiveToneDiagnostics = {
+  exposureEv: number
+  luminanceBefore: number
+  luminanceAfter: number
+  skinLuminanceBefore: number | null
+  blueGain: number
+  greenGain: number
+  redGain: number
+  shadowLift: number
+  highlightRecovery: number
+}
 export const BACKDROP_COMPLETION_LABELS: Record<BackdropCompletion, string> = {
   completed: "completado",
   unchanged: "sin cambios",
@@ -71,7 +95,22 @@ export type Event = {
   status: "active" | "closed"
   sessions: PhotoSession[]
   editingProfile: EditingProfile
+  adobeResources: AdobeResourceSnapshot
 }
+
+export type AdobeResourceSnapshot = {
+  bundle: string
+  bundleVersion: string
+  preset: { name: "SmartStudio-Natural"; version: string }
+  action: { set: string; name: string; version: string }
+}
+
+export const smartStudioAdobeResources = (version = "1.0.0"): AdobeResourceSnapshot => ({
+  bundle: "SmartStudio Natural Adobe",
+  bundleVersion: version,
+  preset: { name: "SmartStudio-Natural", version },
+  action: { set: "Ungrouped Actions", name: "SmartStudio-Natural", version },
+})
 
 export type EditingAdjustments = {
   exposure: number
@@ -97,6 +136,7 @@ export const naturalEventProfile = (version = 1): EditingProfile => ({
 export type EditingJobStatus =
   | "queued"
   | "processing"
+  | "awaiting-engine-readiness"
   | "awaiting-jpeg-authorization"
   | "jpeg-rejected"
   | "review"
@@ -104,6 +144,15 @@ export type EditingJobStatus =
   | "failed"
   | "interrupted"
   | "cancelled"
+
+export const EDITING_ENGINE_VALUES = ["local", "adobe"] as const
+export type EditingEngineId = typeof EDITING_ENGINE_VALUES[number]
+export const EDITING_ENGINE_LABELS: Record<EditingEngineId, string> = {
+  local: "Motor local",
+  adobe: "Motor Adobe",
+}
+export const isEditingEngineId = (value: unknown): value is EditingEngineId =>
+  EDITING_ENGINE_VALUES.includes(value as EditingEngineId)
 
 export type EditingJob = {
   id: string
@@ -119,10 +168,14 @@ export type EditingJob = {
   previewRelativePath: string | null
   error: string | null
   attempts: number
+  engine: EditingEngineId
+  automation: "natural" | "backdrop"
+  engineFallbackDecision: "not-needed" | "pending" | "authorized" | "rejected"
   origin: "raw" | "jpeg" | null
   rawIssue: "missing" | "corrupt" | "unsupported" | null
   jpegFallbackDecision: "not-needed" | "pending" | "authorized" | "rejected"
   profile: EditingProfile
+  adobeResources: AdobeResourceSnapshot
   adjustments: EditingAdjustments
   uncontrolledConditionsWarning: string | null
   lensCorrectionApplied: boolean
@@ -132,16 +185,31 @@ export type EditingJob = {
   faceCount: number
   portraitWarnings: string[]
   backdropCompletion: BackdropCompletion
+  backdropDiagnostics: BackdropDiagnostics | null
+  adaptiveTone: AdaptiveToneDiagnostics | null
   eyeEnhancementEnabled: boolean
   teethWhiteningEnabled: boolean
   metrics: {
-    processingRoute: "cpu" | "gpu"
+    processingRoute: ProcessingRoute
     previewMilliseconds: number | null
     deliveryMilliseconds: number | null
+    lastAttemptMilliseconds: number | null
     failures: number
     retries: number
+    delays: number
+    timeouts: number
+    lateOutputs: number
   }
   accelerationWarning: string | null
+  manualCorrection: {
+    status: "prepared" | "interrupted" | "saved" | "cancelled"
+    sourceVersionId: string
+    psdRelativePath: string
+    startedAt: string
+    finishedAt: string | null
+    backupStatus: "pending" | "verified" | "failed"
+    backupError: string | null
+  } | null
 }
 
 export type EditingVersion = {
@@ -149,10 +217,13 @@ export type EditingVersion = {
   number: number
   createdAt: string
   profile: EditingProfile
+  adobeResources: AdobeResourceSnapshot
   adjustments: EditingAdjustments
+  engine: EditingEngineId
+  automation: "natural" | "backdrop"
   origin: "raw" | "jpeg"
   previewRelativePath: string
-  approvalStatus: "review" | "approved" | "revoked" | "superseded"
+  approvalStatus: "review" | "approved" | "revoked" | "superseded" | "rejected"
   approvedAt: string | null
   revokedAt: string | null
   fullRelativePath: string | null
@@ -165,7 +236,7 @@ export type EditingVersion = {
 }
 
 export type WorkflowState = {
-  version: 10
+  version: 17
   events: Event[]
   editingJobs: EditingJob[]
   activeEventId: string | null
@@ -173,7 +244,7 @@ export type WorkflowState = {
 }
 
 export const emptyWorkflowState = (): WorkflowState => ({
-  version: 10,
+  version: 17,
   events: [],
   editingJobs: [],
   activeEventId: null,

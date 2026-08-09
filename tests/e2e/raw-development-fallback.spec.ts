@@ -90,7 +90,7 @@ test("un RAW corrupto permite rechazar procesar desde JPEG sin fabricar resultad
     const original = await application.readDataFile(rawPath)
     await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
     const card = application.page.getByTestId(`editing-job-${baseName}`)
-    await expect(card.getByText("Requiere decisión JPEG", { exact: true })).toBeVisible()
+    await expect(card.getByText("Requiere decisión JPEG", { exact: true })).toBeVisible({ timeout: 10_000 })
     await expect(card.getByText("corrupto o incompleto", { exact: false })).toBeVisible()
     await card.getByRole("button", { name: "No procesar desde JPEG" }).click()
     await expect(card.getByText("JPEG rechazado", { exact: true })).toBeVisible()

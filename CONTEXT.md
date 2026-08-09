@@ -63,6 +63,22 @@ SmartStudio será una sola aplicación local organizada por capacidades. El prim
 - El 4 de agosto de 2026 se completó un recorrido manual integral en navegador sin errores ni advertencias de consola. La interfaz se comprobó también a 390 × 844 píxeles sin desbordamiento horizontal.
 - La verificación actual pasa comprobación de tipos, compilación de producción y 30 pruebas E2E, incluidas RAW ARW/CR2, cola y recuperación, versiones, JPEG completo, importación robusta, recepción desde carpeta Sony, retoque de retrato y completado de fondo.
 
+## Alternativa Adobe confirmada para especificación
+
+- Se desarrollará primero como prueba de concepto una alternativa de **Edición automática** basada en Adobe, separada de la versión local basada en darktable. No se considerará operativa para eventos hasta validar calidad, funcionamiento sin conexión continua a internet, recuperación ante fallos y rendimiento en la computadora objetivo.
+- SmartStudio conserva el control de las sesiones fotográficas, la selección, la cola, las versiones de edición, la revisión, la aprobación y el respaldo. La alternativa usa Adobe Camera Raw para el revelado y Photoshop para el retoque; Lightroom Classic no forma parte del primer flujo.
+- La primera automatización Adobe se evaluará mediante un preset versionado de Camera Raw, una Action y un Droplet de Photoshop. Una extensión UXP solo se considerará si ese mecanismo no ofrece el control o la trazabilidad necesarios.
+- La fotografía principal entra automáticamente al procesamiento Adobe al finalizar la sesión fotográfica. `SmartStudio-Natural` es la automatización predeterminada; `SmartStudio-Fondo` se solicita explícitamente después de revisar el resultado Natural y crea una versión de edición nueva.
+- Cada evento fija la combinación de versiones del preset y la Action. Los cambios afectan trabajos futuros y una fotografía anterior solo adopta la nueva combinación mediante reprocesamiento explícito.
+- La prueba de concepto puede comenzar con un preset fijo. Los ajustes acotados ya confirmados de exposición, temperatura, intensidad de color y suavizado de piel deben integrarse antes de considerar operativa la alternativa Adobe.
+- Photoshop produce una única salida JPEG sRGB de resolución completa por procesamiento y SmartStudio deriva de ella la vista previa. La aprobación utiliza ese mismo JPEG después de comprobar su legibilidad, dimensiones, asociación con el original y metadatos permitidos.
+- Una máscara, borde o retoque defectuoso queda en `Necesita revisión en Photoshop`; nunca se aprueba automáticamente. La corrección manual usa un PSD, guarda una versión de edición nueva y vuelve a exigir revisión en SmartStudio. El PSD se conserva durante el evento y hasta verificar su respaldo al SSD.
+- Los trabajos que esperan revisión manual no bloquean la cola. Mientras Photoshop está ocupado con una corrección manual, los nuevos trabajos Adobe se pausan para evitar interferencias y se reanudan al terminar.
+- Una vista previa Adobe que supere 30 segundos genera una advertencia. El primer límite de interrupción será de dos minutos y podrá ajustarse después de medir; un trabajo interrumpido permanece reintentable y no acepta archivos parciales.
+- Antes de un evento se comprueban Photoshop estable, Camera Raw, el preset, el Droplet, las carpetas de intercambio y los recursos requeridos para operar sin conexión continua a internet. Un fallo bloquea los trabajos Adobe, pero no la captura.
+- Si Adobe no está disponible, la versión local basada en darktable puede ofrecerse únicamente como alternativa explícita. El cambio nunca es silencioso y cada versión de edición conserva identificado su motor de origen.
+- La edición generativa no forma parte de la ruta indispensable. El funcionamiento normal no depende de Firefly, APIs pagadas ni servicios obligatorios en la nube.
+
 ## Trabajo pendiente confirmado
 
 - Validar físicamente la Sony A7 IV por USB mediante Imaging Edge Remote en la laptop objetivo, incluyendo RAW + JPEG, conservación en tarjeta, desconexión, recuperación manual, respaldo y tiempos reales.

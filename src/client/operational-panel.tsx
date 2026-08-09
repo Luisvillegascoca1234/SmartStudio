@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { BatteryCharging, Camera, HardDrive, ShieldCheck } from "lucide-react"
+import { BatteryCharging, Camera, HardDrive, ShieldCheck, WandSparkles } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -47,12 +47,23 @@ export function OperationalPanel({ operations, busy, configureBackup, configureS
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <StatusCard icon={<WandSparkles />} title="Edición Adobe" status={operations.adobe.status === "ready" ? "Preparada" : "No disponible"} copy={operations.adobe.status === "ready" ? "Photoshop, Camera Raw y automatización comprobados" : `${operations.adobe.checks.filter((check) => !check.ready).length} requisitos pendientes`} />
         <StatusCard icon={<Camera />} title="Fuente de captura" status={operations.captureSource.status === "ready" ? "Carpeta lista" : "No disponible"} copy={operations.captureSource.label} />
         <StatusCard icon={<HardDrive />} title="Disco interno" status={capacityLabel[operations.internalStorage.level]} copy={bytesAsGiB(operations.internalStorage.freeBytes)} />
         <StatusCard icon={<ShieldCheck />} title="SSD externo" status={backupLabel[operations.backup.status]} copy={operations.backup.connected ? `${operations.backup.verifiedFiles} archivos verificados` : "Conecta y configura una carpeta del SSD"} />
         <StatusCard icon={<BatteryCharging />} title="Alimentación" status={operations.power.status === "ac" ? "Correcta" : operations.power.status === "battery" ? "Batería" : "Sin confirmar"} copy={operations.power.label} />
       </div>
+
+      {operations.adobe.status === "unavailable" && (
+        <Alert className="mt-3 border-amber-500/35 bg-amber-500/10">
+          <WandSparkles />
+          <AlertTitle>La ruta Adobe todavía no está preparada</AlertTitle>
+          <AlertDescription>
+            Puedes seguir capturando. Antes de procesar con Adobe corrige: {operations.adobe.checks.filter((check) => !check.ready).map((check) => check.label).join(", ") || "la configuración Adobe"}.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {operations.internalStorage.level === "low" && (
         <Alert className="mt-3 border-amber-500/35 bg-amber-500/10">

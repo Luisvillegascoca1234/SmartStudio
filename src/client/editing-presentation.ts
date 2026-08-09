@@ -3,6 +3,7 @@ import type { EditingJob } from "../shared/workflow.js"
 export const editingStatusPresentation: Record<EditingJob["status"], { badge: string; history: string }> = {
   queued: { badge: "En cola", history: "Edición en cola" },
   processing: { badge: "Procesando", history: "Edición en proceso" },
+  "awaiting-engine-readiness": { badge: "Adobe pendiente", history: "Esperando preparación Adobe" },
   "awaiting-jpeg-authorization": { badge: "Requiere decisión JPEG", history: "Esperando decisión sobre JPEG" },
   "jpeg-rejected": { badge: "JPEG rechazado", history: "Procesamiento desde JPEG rechazado" },
   review: { badge: "Lista para revisar", history: "Edición lista para revisar" },

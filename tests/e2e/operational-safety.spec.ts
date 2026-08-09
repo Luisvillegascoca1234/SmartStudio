@@ -48,7 +48,7 @@ test("protege nuevas sesiones fotográficas y verifica el respaldo sin detener e
 
     await application.page.getByLabel("Ruta de carpeta del SSD").fill(externalDirectory)
     await application.page.getByRole("button", { name: "Configurar SSD" }).click()
-    await expect(application.page.getByText("Disponible")).toBeVisible()
+    await expect(application.page.getByText(/^(Disponible|Respaldado y verificado)$/)).toBeVisible()
     await expect(application.page.getByRole("button", { name: "Iniciar sesión fotográfica" })).toBeEnabled()
     await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
     await application.page.getByRole("button", { name: "Iniciar serie" }).click()

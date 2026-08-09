@@ -50,7 +50,9 @@ test("asocia archivos concretos en cualquier orden y conserva originales", async
       path.join(backupDirectory, "BACKUP_002.JPG"),
       path.join(backupDirectory, "LEEME.txt"),
     ])
-    await expect(application.page.getByText("Seleccionados: BACKUP_001.ARW · BACKUP_001.JPG · BACKUP_002.JPG · LEEME.txt")).toBeVisible()
+    await expect(application.page.getByLabel("Archivos seleccionados")).toHaveValue(
+      "BACKUP_001.ARW · BACKUP_001.JPG · BACKUP_002.JPG · LEEME.txt",
+    )
     await application.page.getByRole("button", { name: "Importar archivos" }).click()
 
     const completeManual = application.page.getByTestId("capture-BACKUP_001")

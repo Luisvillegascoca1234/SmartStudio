@@ -112,7 +112,7 @@ const analyzePixels = async (jpegPath: string, controlledFixture: boolean) => {
 
 const analyzeFaces = async (jpegPath: string, options: AssessmentOptions): Promise<FaceAnalysis> => {
   const modelDirectory = options.modelDirectory ?? process.env.SMARTSTUDIO_MODEL_DIR ?? path.resolve(".smartstudio-data", "models")
-  const result = await runLocalProcess(options.pythonExecutable ?? process.env.SMARTSTUDIO_PYTHON ?? "python", [
+  const result = await runLocalProcess(options.pythonExecutable ?? process.env.SMARTSTUDIO_PYTHON ?? (process.platform === "win32" ? "py" : "python3"), [
     path.resolve("scripts", "analyze-face.py"),
     jpegPath,
     path.join(modelDirectory, "face_landmarker.task"),

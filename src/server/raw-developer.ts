@@ -22,7 +22,7 @@ export class RawDevelopmentError extends Error {
 export class RawDeveloper {
   constructor(
     private readonly dataDirectory: string,
-    private readonly pythonExecutable = process.env.SMARTSTUDIO_PYTHON ?? "python",
+    private readonly pythonExecutable = process.env.SMARTSTUDIO_PYTHON ?? (process.platform === "win32" ? "py" : "python3"),
     private readonly darktableExecutable = process.env.SMARTSTUDIO_DARKTABLE,
   ) {}
 

@@ -13,6 +13,7 @@ import {
   sessionCaptures,
   sessionIsReadyForEditing,
   naturalEventProfile,
+  smartStudioAdobeResources,
   type Capture,
   type EditingJob,
   type EditingVersion,
@@ -21,12 +22,15 @@ import {
 } from "../shared/workflow.js"
 import { CaptureService } from "./capture-service.js"
 import { EditingService } from "./editing-service.js"
+import { LocalEditingEngine, type EditingEngine } from "./editing-engine.js"
 import type { PortraitFixture } from "./portrait-retoucher.js"
 import type { SimulationProfile } from "./simulator.js"
 import { OperationsService } from "./operations-service.js"
 import { SonyFolderReceiver } from "./sony-folder-receiver.js"
 import { WorkflowStore } from "./workflow-store.js"
 import { sha256File } from "./file-hash.js"
+import { AdobeReadinessProbe } from "./adobe-readiness.js"
+import type { AdobeReadiness } from "../shared/operations.js"
 
 export type ServerOptions = {
   dataDirectory: string
@@ -34,8 +38,12 @@ export type ServerOptions = {
   logger?: boolean
   testFeatures?: boolean
   editingProcessingDelayMilliseconds?: number
+  editingTimeoutMilliseconds?: number
+  editingDelayWarningMilliseconds?: number
   controlledPortraitFixture?: PortraitFixture
   simulatedCaptureProfile?: SimulationProfile
+  editingEngine?: EditingEngine
+  adobeReadinessProvider?: () => Promise<AdobeReadiness>
 }
 
 const requireText = (value: unknown, label: string): string => {
@@ -48,24 +56,35 @@ const requireText = (value: unknown, label: string): string => {
 const optionalText = (value: unknown): string | null =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : null
 
-const createEditingJob = (event: Event, sessionId: string, capture: Capture, id = crypto.randomUUID()): EditingJob => ({
+const createEditingJob = (
+  event: Event,
+  sessionId: string,
+  capture: Capture,
+  engine: EditingJob["engine"],
+  adobeUnavailableReason: string | null = null,
+  id = crypto.randomUUID(),
+): EditingJob => ({
   id,
   eventId: event.id,
   sessionId,
   captureId: capture.id,
-  status: "queued",
+  status: adobeUnavailableReason ? "awaiting-engine-readiness" : "queued",
   createdAt: new Date().toISOString(),
   startedAt: null,
   finishedAt: null,
   previewReadyAt: null,
   approvedAt: null,
   previewRelativePath: null,
-  error: null,
+  error: adobeUnavailableReason,
   attempts: 0,
+  engine,
+  automation: "natural",
+  engineFallbackDecision: adobeUnavailableReason ? "pending" : "not-needed",
   origin: null,
   rawIssue: null,
   jpegFallbackDecision: "not-needed",
   profile: structuredClone(event.editingProfile),
+  adobeResources: structuredClone(event.adobeResources),
   adjustments: structuredClone(event.editingProfile.defaults),
   uncontrolledConditionsWarning: capture.quality?.warnings.some((warning) => warning === "exposure" || warning === "poor-framing")
     ? "La captura se aleja de las condiciones controladas; se aplicó una corrección conservadora."
@@ -77,10 +96,13 @@ const createEditingJob = (event: Event, sessionId: string, capture: Capture, id 
   faceCount: 0,
   portraitWarnings: [],
   backdropCompletion: "unchanged",
-  eyeEnhancementEnabled: true,
-  teethWhiteningEnabled: true,
-  metrics: { processingRoute: "cpu", previewMilliseconds: null, deliveryMilliseconds: null, failures: 0, retries: 0 },
+  backdropDiagnostics: null,
+  adaptiveTone: null,
+  eyeEnhancementEnabled: false,
+  teethWhiteningEnabled: false,
+  metrics: { processingRoute: "cpu", previewMilliseconds: null, deliveryMilliseconds: null, lastAttemptMilliseconds: null, failures: 0, retries: 0, delays: 0, timeouts: 0, lateOutputs: 0 },
   accelerationWarning: "La ruta de aceleración se confirmará al procesar la fotografía.",
+  manualCorrection: null,
 })
 
 const backupCoverage = (version: EditingVersion, paths: Set<string>): { included: boolean; attempted: boolean } => {
@@ -91,46 +113,90 @@ const backupCoverage = (version: EditingVersion, paths: Set<string>): { included
   }
 }
 
+const artifactBackupCoverage = (relativePath: string, paths: Set<string>): { included: boolean; attempted: boolean } => ({
+  included: paths.has(relativePath),
+  attempted: paths.has(relativePath),
+})
+
 export async function createSmartStudioServer(options: ServerOptions): Promise<FastifyInstance> {
   const app = fastify({ logger: options.logger ?? false })
   const store = new WorkflowStore(options.dataDirectory)
   await store.initialize()
   const operations = new OperationsService(options.dataDirectory, options.testFeatures === true)
+  const adobeReadiness = new AdobeReadinessProbe(options.dataDirectory)
+  operations.setAdobeReadinessProvider(options.adobeReadinessProvider ?? (() => adobeReadiness.inspect()))
   await operations.initialize()
   store.onPersisted(() => operations.scheduleBackup())
   operations.onBackupResult((result) => {
     const paths = new Set(result.relativePaths)
     const snapshot = store.snapshot()
-    const needsUpdate = snapshot.editingJobs.some((job) => job.versions.some((version) => {
-      const { included, attempted } = backupCoverage(version, paths)
+    const needsUpdate = snapshot.editingJobs.some((job) => {
+      const versionChanged = job.versions.some((version) => {
+        const { included, attempted } = backupCoverage(version, paths)
+        const nextStatus = result.status === "verified" && included
+          ? "verified"
+          : result.status === "failed" && attempted && version.backupStatus !== "verified" ? "failed" : version.backupStatus
+        return version.backupStatus !== nextStatus || (nextStatus === "failed" && version.backupError !== result.error)
+      })
+      const correction = job.manualCorrection
+      if (!correction) return versionChanged
+      const { included, attempted } = artifactBackupCoverage(correction.psdRelativePath, paths)
       const nextStatus = result.status === "verified" && included
         ? "verified"
-        : result.status === "failed" && attempted && version.backupStatus !== "verified" ? "failed" : version.backupStatus
-      return version.backupStatus !== nextStatus || (nextStatus === "failed" && version.backupError !== result.error)
-    }))
+        : result.status === "failed" && attempted && correction.backupStatus !== "verified" ? "failed" : correction.backupStatus
+      return versionChanged || correction.backupStatus !== nextStatus || (nextStatus === "failed" && correction.backupError !== result.error)
+    })
     if (!needsUpdate) return
     void store.mutate((state) => {
-      for (const job of state.editingJobs) for (const version of job.versions) {
-        const { included, attempted } = backupCoverage(version, paths)
-        if (result.status === "verified" && included) {
-          version.backupStatus = "verified"
-          version.backupError = null
-        } else if (result.status === "failed" && attempted && version.backupStatus !== "verified") {
-          version.backupStatus = "failed"
-          version.backupError = result.error
+      for (const job of state.editingJobs) {
+        for (const version of job.versions) {
+          const { included, attempted } = backupCoverage(version, paths)
+          if (result.status === "verified" && included) {
+            version.backupStatus = "verified"
+            version.backupError = null
+          } else if (result.status === "failed" && attempted && version.backupStatus !== "verified") {
+            version.backupStatus = "failed"
+            version.backupError = result.error
+          }
+        }
+        if (job.manualCorrection) {
+          const { included, attempted } = artifactBackupCoverage(job.manualCorrection.psdRelativePath, paths)
+          if (result.status === "verified" && included) {
+            job.manualCorrection.backupStatus = "verified"
+            job.manualCorrection.backupError = null
+          } else if (result.status === "failed" && attempted && job.manualCorrection.backupStatus !== "verified") {
+            job.manualCorrection.backupStatus = "failed"
+            job.manualCorrection.backupError = result.error
+          }
         }
       }
     }).catch(() => undefined)
   })
   const captures = new CaptureService(store, options.dataDirectory, options.testFeatures ? options.simulatedCaptureProfile : undefined)
+  const editingEngine = options.editingEngine ?? new LocalEditingEngine(
+    options.dataDirectory,
+    options.testFeatures ? options.controlledPortraitFixture : undefined,
+  )
+  const localEditingEngine = editingEngine.id === "local"
+    ? editingEngine
+    : new LocalEditingEngine(options.dataDirectory, options.testFeatures ? options.controlledPortraitFixture : undefined)
   const editing = new EditingService(
     store,
     options.dataDirectory,
     options.editingProcessingDelayMilliseconds ?? (options.testFeatures ? 1_000 : 0),
     () => operations.assertCanFinishEditing(),
-    options.testFeatures ? options.controlledPortraitFixture : undefined,
+    editingEngine.id === "local" ? [editingEngine] : [editingEngine, localEditingEngine],
+    options.editingTimeoutMilliseconds ?? 120_000,
+    options.editingDelayWarningMilliseconds ?? 30_000,
   )
   await editing.initialize()
+  const adobeUnavailableReason = async (): Promise<string | null> => {
+    if (editingEngine.id !== "adobe") return null
+    const readiness = (await operations.snapshot()).adobe
+    if (readiness.status === "ready") return null
+    const missing = readiness.checks.filter((check) => !check.ready).map((check) => check.label)
+    return `La ruta Adobe no está preparada${missing.length > 0 ? `: ${missing.join(", ")}` : ""}.`
+  }
   const enqueueEditingCapture = async (eventId: string, sessionId: string, captureId: string): Promise<WorkflowState> => {
     await operations.assertCanStartEditing()
     const snapshot = store.snapshot()
@@ -141,11 +207,11 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     if (event.status !== "active") throw new Error("El evento está cerrado y no admite nuevos trabajos de edición.")
     const duplicate = snapshot.editingJobs.find((job) => job.captureId === captureId && job.profile.version === event.editingProfile.version)
     if (duplicate) return snapshot
-    const job = createEditingJob(event, sessionId, capture)
+    const job = createEditingJob(event, sessionId, capture, editingEngine.id, await adobeUnavailableReason())
     const result = await store.mutate((state) => {
       state.editingJobs.push(job)
     })
-    editing.schedule(job.id)
+    if (job.status === "queued") editing.schedule(job.id)
     return result
   }
   const openEventForEditingJob = (jobId: string): Event => {
@@ -274,6 +340,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
         status: "active",
         sessions: [],
         editingProfile: naturalEventProfile(),
+        adobeResources: smartStudioAdobeResources(),
       })
       state.activeEventId = id
     })
@@ -358,18 +425,68 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
       throw new Error("La sesión fotográfica necesita entre una y tres selecciones y exactamente una principal.")
     }
     const principal = sessionCaptures(session).find((capture) => capture.principal)!
+    const unavailableReason = await adobeUnavailableReason()
     let jobId = ""
     const result = await store.mutate((state) => {
       const event = activeEvent(state)!
       const currentSession = activeSession(state)!
       currentSession.status = "completed"
       currentSession.completedAt = new Date().toISOString()
-      const job = createEditingJob(event, currentSession.id, principal)
+      const job = createEditingJob(event, currentSession.id, principal, editingEngine.id, unavailableReason)
       jobId = job.id
       state.editingJobs.push(job)
     })
-    editing.schedule(jobId)
+    if (!unavailableReason) editing.schedule(jobId)
     return result
+  })
+
+  app.post<{ Params: { id: string } }>("/api/editing/:id/retry-engine", async (request) => {
+    const reason = await adobeUnavailableReason()
+    const job = store.snapshot().editingJobs.find((item) => item.id === request.params.id)
+    if (!job || job.status !== "awaiting-engine-readiness" || job.engine !== "adobe") {
+      throw new Error("No existe un trabajo Adobe pendiente de preparación.")
+    }
+    if (reason) {
+      return store.mutate((state) => {
+        const current = state.editingJobs.find((item) => item.id === request.params.id)!
+        current.error = reason
+      })
+    }
+    const result = await store.mutate((state) => {
+      const current = state.editingJobs.find((item) => item.id === request.params.id)!
+      current.status = "queued"
+      current.engineFallbackDecision = "not-needed"
+      current.error = null
+    })
+    editing.schedule(request.params.id)
+    return result
+  })
+
+  app.post<{ Params: { id: string } }>("/api/editing/:id/use-local-engine", async (request) => {
+    await operations.assertCanStartEditing()
+    const job = store.snapshot().editingJobs.find((item) => item.id === request.params.id)
+    if (!job || job.status !== "awaiting-engine-readiness" || job.engine !== "adobe") {
+      throw new Error("No existe un trabajo Adobe pendiente que pueda usar el motor local.")
+    }
+    const result = await store.mutate((state) => {
+      const current = state.editingJobs.find((item) => item.id === request.params.id)!
+      current.engine = "local"
+      current.engineFallbackDecision = "authorized"
+      current.status = "queued"
+      current.error = null
+    })
+    editing.schedule(request.params.id)
+    return result
+  })
+
+  app.post<{ Params: { id: string } }>("/api/editing/:id/keep-pending", async (request) => {
+    const job = store.snapshot().editingJobs.find((item) => item.id === request.params.id)
+    if (!job || job.status !== "awaiting-engine-readiness") throw new Error("El trabajo no está esperando preparación Adobe.")
+    return store.mutate((state) => {
+      const current = state.editingJobs.find((item) => item.id === request.params.id)!
+      current.engineFallbackDecision = "rejected"
+      current.error = "El trabajo se conserva pendiente hasta que la ruta Adobe esté preparada."
+    })
   })
 
   app.post<{ Params: { id: string }; Body?: { versionId?: string } }>("/api/editing/:id/approve", async (request) => {
@@ -416,8 +533,24 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
   app.post<{ Params: { id: string } }>("/api/editing/:id/reprocess-current-profile", async (request) => {
     await operations.assertCanStartEditing()
     const event = openEventForEditingJob(request.params.id)
-    return editing.reprocessWithProfile(request.params.id, event.editingProfile)
+    return editing.reprocessWithProfile(request.params.id, event.editingProfile, event.adobeResources)
   })
+  app.post<{ Params: { id: string } }>("/api/editing/:id/backdrop", async (request) => {
+    await operations.assertCanStartEditing()
+    openEventForEditingJob(request.params.id)
+    return editing.requestBackdrop(request.params.id)
+  })
+  app.post<{ Params: { id: string }; Body: { versionId?: unknown } }>("/api/editing/:id/reject-version", async (request) => {
+    if (typeof request.body?.versionId !== "string") throw new Error("La versión es obligatoria.")
+    return editing.rejectVersion(request.params.id, request.body.versionId)
+  })
+  app.post<{ Params: { id: string }; Body: { versionId?: unknown } }>("/api/editing/:id/manual/prepare", async (request) => {
+    if (typeof request.body?.versionId !== "string") throw new Error("La versión es obligatoria.")
+    await operations.assertCanStartEditing()
+    return editing.prepareManualCorrection(request.params.id, request.body.versionId)
+  })
+  app.post<{ Params: { id: string } }>("/api/editing/:id/manual/finish", async (request) => editing.finishManualCorrection(request.params.id))
+  app.post<{ Params: { id: string } }>("/api/editing/:id/manual/cancel", async (request) => editing.cancelManualCorrection(request.params.id))
   app.post<{ Params: { id: string } }>("/api/editing/:id/revoke", async (request) => editing.revokeApproval(request.params.id))
   app.post<{ Params: { id: string } }>("/api/editing/:id/retry-delivery", async (request) => editing.retryDelivery(request.params.id))
 
@@ -455,6 +588,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     return store.mutate((state) => {
       const current = activeEvent(state)!
       current.editingProfile = naturalEventProfile(current.editingProfile.version + 1)
+      current.adobeResources = smartStudioAdobeResources(`${current.editingProfile.version}.0.0`)
     })
   })
 
@@ -583,6 +717,14 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     if (!job?.previewRelativePath) return reply.status(404).send({ error: "La edición todavía no tiene vista previa." })
     reply.type("image/jpeg")
     return reply.send(createReadStream(path.join(options.dataDirectory, job.previewRelativePath)))
+  })
+
+  app.get<{ Params: { id: string; versionId: string } }>("/editing/:id/versions/:versionId/preview", async (request, reply) => {
+    const job = store.snapshot().editingJobs.find((item) => item.id === request.params.id)
+    const version = job?.versions.find((item) => item.id === request.params.versionId)
+    if (!version) return reply.status(404).send({ error: "La versión no existe." })
+    reply.type("image/jpeg")
+    return reply.send(createReadStream(path.join(options.dataDirectory, version.previewRelativePath)))
   })
 
   if (options.staticDirectory) {
