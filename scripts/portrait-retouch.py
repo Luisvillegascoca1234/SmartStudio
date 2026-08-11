@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -18,6 +19,74 @@ RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 LEFT_IRIS = [468, 469, 470, 471, 472]
 RIGHT_IRIS = [473, 474, 475, 476, 477]
 INNER_MOUTH = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95]
+
+
+def decision(applied, reason=None, regions=0):
+    return {"status": "applied" if applied else "omitted", "reason": reason, "regions": regions}
+
+
+def protected_skin_mask(image, candidate):
+    """Keep strongly defined/dark permanent detail out of automatic skin correction."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gradient = cv2.magnitude(
+        cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3),
+        cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3),
+    )
+    values = gray[candidate > 0]
+    if values.size == 0:
+        return candidate
+    protected = (gradient > 72) | (gray < np.percentile(values, 8))
+    protected = cv2.dilate(protected.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    safe = candidate.copy()
+    safe[protected] = 0
+    return safe
+
+
+def polish_skin(image, candidate, level):
+    safe_mask = protected_skin_mask(image, candidate)
+    if level <= 0 or np.count_nonzero(safe_mask) < 40:
+        return image, False
+    x, y, w, h = cv2.boundingRect(safe_mask)
+    region = image[y:y+h, x:x+w]
+    local_mask = safe_mask[y:y+h, x:x+w]
+    # A visible local tone correction plus edge-preserving smoothing. High-frequency
+    # detail is mixed back in so pores survive while temporary unevenness recedes.
+    base = cv2.bilateralFilter(region, 9, 44, 44)
+    detail = region.astype(np.float32) - cv2.GaussianBlur(region, (0, 0), 1.15).astype(np.float32)
+    lab = cv2.cvtColor(base, cv2.COLOR_BGR2LAB)
+    light, green_red, blue_yellow = cv2.split(lab)
+    light = cv2.addWeighted(light, .88, cv2.GaussianBlur(light, (0, 0), max(2, w / 80)), .12, 2)
+    green_red = cv2.addWeighted(green_red, .72, np.full_like(green_red, 128), .28, 0)
+    corrected = cv2.cvtColor(cv2.merge((light, green_red, blue_yellow)), cv2.COLOR_LAB2BGR).astype(np.float32)
+    corrected = np.clip(corrected + detail * .58, 0, 255)
+    alpha = cv2.GaussianBlur(local_mask, (0, 0), max(1.5, w / 150)).astype(np.float32)[:, :, None] / 255
+    strength = .48 if level == 1 else .68
+    image[y:y+h, x:x+w] = np.clip(region * (1 - alpha * strength) + corrected * alpha * strength, 0, 255).astype(np.uint8)
+    return image, True
+
+
+def balance_face_light(image, face_mask):
+    if np.count_nonzero(face_mask) < 40:
+        return image, False
+    x, y, w, h = cv2.boundingRect(face_mask)
+    region = image[y:y+h, x:x+w]
+    local_mask = face_mask[y:y+h, x:x+w]
+    lab = cv2.cvtColor(region, cv2.COLOR_BGR2LAB)
+    light = lab[:, :, 0]
+    values = light[local_mask > 0]
+    if values.size < 40:
+        return image, False
+    low, high = np.percentile(values, (12, 92))
+    lifted = light.astype(np.float32)
+    shadows = np.clip((low + 26 - lifted) / 26, 0, 1)
+    highlights = np.clip((lifted - (high - 12)) / 22, 0, 1)
+    lifted += shadows * 10 - highlights * 8
+    corrected_lab = lab.copy()
+    corrected_lab[:, :, 0] = np.clip(lifted, 0, 255).astype(np.uint8)
+    corrected = cv2.cvtColor(corrected_lab, cv2.COLOR_LAB2BGR)
+    alpha = cv2.GaussianBlur(local_mask, (0, 0), max(2, w / 100)).astype(np.float32)[:, :, None] / 255 * .62
+    image[y:y+h, x:x+w] = np.clip(region * (1 - alpha) + corrected * alpha, 0, 255).astype(np.uint8)
+    return image, True
 
 
 def ellipse_mask(shape, face):
@@ -41,75 +110,116 @@ def confident_eye_pair(eyes, face_width, face_height):
 
 
 def apply_controlled(image, level, controlled_arg):
+    started = time.perf_counter()
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     height, width = image.shape[:2]
     if controlled_arg in ("controlled:backdrop", "controlled:backdrop-uncertain-mask"):
         person_mask = np.zeros((height, width), dtype=np.uint8)
         cv2.ellipse(person_mask, (width // 2, int(height * .58)), (int(width * .18), int(height * .38)), 0, 0, 360, 255, -1)
-        image, backdrop, warning = complete_uniform_backdrop(
-            image,
-            person_mask,
-            controlled_arg != "controlled:backdrop-uncertain-mask",
-        )
+        image, backdrop, warning = complete_uniform_backdrop(image, person_mask, controlled_arg != "controlled:backdrop-uncertain-mask")
+        done = backdrop == "completed"
         return image, {
-            "faces": 0,
-            "treated": 0,
-            "warnings": [warning] if warning else [],
-            "backdrop": backdrop,
+            "faces": 0, "treated": 0, "warnings": [warning] if warning else [], "backdrop": backdrop,
+            "operations": {
+                "skin": decision(False, "No se detectaron rostros."),
+                "eyes": decision(False, "No se detectaron rostros."),
+                "teeth": decision(False, "No se detectaron rostros."),
+                "facialLighting": decision(False, "No se detectaron rostros."),
+                "backdrop": decision(done, warning, 1 if done else 0),
+            },
+            "stageMilliseconds": {"analysis": 0, "skin": 0, "eyesTeeth": 0, "facialLighting": 0, "backdrop": round((time.perf_counter() - started) * 1000)},
         }
     if controlled_arg.startswith("controlled:") and controlled_arg.removeprefix("controlled:").isdigit():
         face_count = max(1, int(controlled_arg.removeprefix("controlled:")))
         face_width = .82 / face_count
-        faces = [
-            (int(width * (.04 + index * (.92 / face_count))), int(height * .15), int(width * face_width), int(height * .55))
-            for index in range(face_count)
-        ]
+        faces = [(int(width * (.04 + index * (.92 / face_count))), int(height * .15), int(width * face_width), int(height * .55)) for index in range(face_count)]
     else:
         faces = [(int(width * .63), int(height * .07), int(width * .31), int(height * .48))]
     eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
     smile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_smile.xml")
     warnings = []
-    treated = 0
+    applied = {"skin": 0, "eyes": 0, "teeth": 0, "facialLighting": 0}
+    omitted = {"skin": 0, "eyes": 0, "teeth": 0, "facialLighting": 0}
+    stage_times = {"analysis": 0, "skin": 0, "eyesTeeth": 0, "facialLighting": 0, "backdrop": 0}
     for x, y, w, h in faces:
         mask = ellipse_mask(image.shape, (x, y, w, h))
-        if level > 0:
-            smooth = cv2.bilateralFilter(image, 5 if level == 1 else 7, 22 if level == 1 else 32, 22 if level == 1 else 32)
-            alpha = cv2.GaussianBlur(mask, (0, 0), 3).astype(np.float32)[:, :, None] / 255
-            strength = .20 if level == 1 else .34
-            image = np.clip(image * (1 - alpha * strength) + smooth * alpha * strength, 0, 255).astype(np.uint8)
+        skin_started = time.perf_counter()
+        protected = np.zeros_like(mask)
+        for center, axes in (
+            ((x + int(w*.27), y + int(h*.39)), (max(2, int(w*.12)), max(2, int(h*.07)))),
+            ((x + int(w*.73), y + int(h*.39)), (max(2, int(w*.12)), max(2, int(h*.07)))),
+            ((x + int(w*.50), y + int(h*.76)), (max(2, int(w*.20)), max(2, int(h*.08)))),
+        ):
+            cv2.ellipse(protected, center, axes, 0, 0, 360, 255, -1)
+        if controlled_arg not in ("controlled:uncertain", "controlled:skin-uncertain"):
+            image, skin_done = polish_skin(image, cv2.bitwise_and(mask, cv2.bitwise_not(protected)), level)
+            applied["skin"] += int(skin_done)
+            omitted["skin"] += int(not skin_done)
+        else:
+            omitted["skin"] += 1
+            warnings.append("La máscara de piel fue incierta en un rostro; se omitió únicamente su pulido.")
+        stage_times["skin"] += round((time.perf_counter() - skin_started) * 1000)
+
         roi_gray = gray[y:y+h, x:x+w]
+        feature_started = time.perf_counter()
         eyes = list(eye_cascade.detectMultiScale(roi_gray[:h//2], 1.1, 5, minSize=(18, 12)))
-        if controlled_arg != "controlled:uncertain" and not eyes:
+        if controlled_arg not in ("controlled:uncertain", "controlled:partial-eyes") and not eyes:
             eyes = [(int(w*.18), int(h*.32), int(w*.18), int(h*.12)), (int(w*.62), int(h*.32), int(w*.18), int(h*.12))]
         eyes = confident_eye_pair(eyes, w, h)
         if not eyes:
+            omitted["eyes"] += 1
             warnings.append("No se detectaron ambos ojos con confianza en un rostro; se omitió su mejora.")
+        else:
+            applied["eyes"] += 1
         for ex, ey, ew, eh in eyes:
             eye = image[y+ey:y+ey+eh, x+ex:x+ex+ew]
             blue, green, red = cv2.split(eye)
             red_pixels = (red.astype(np.float32) > green * 1.35) & (red.astype(np.float32) > blue * 1.35)
             red[red_pixels] = ((green[red_pixels].astype(np.uint16) + blue[red_pixels].astype(np.uint16)) // 2).astype(np.uint8)
             corrected = cv2.merge((blue, green, red))
-            image[y+ey:y+ey+eh, x+ex:x+ex+ew] = cv2.addWeighted(
-                corrected, 1.08, cv2.GaussianBlur(corrected, (0, 0), 1), -.08, 3,
-            )
+            image[y+ey:y+ey+eh, x+ex:x+ex+ew] = cv2.addWeighted(corrected, 1.13, cv2.GaussianBlur(corrected, (0, 0), 1), -.13, 4)
+
         smiles = list(smile_cascade.detectMultiScale(roi_gray[h//2:], 1.5, 20, minSize=(25, 10)))
-        if controlled_arg != "controlled:uncertain" and not smiles:
+        if controlled_arg not in ("controlled:uncertain", "controlled:no-teeth") and not smiles:
             smiles = [(int(w*.32), int(h*.25), int(w*.36), int(h*.12))]
-        if controlled_arg == "controlled:uncertain":
+        if controlled_arg in ("controlled:uncertain", "controlled:no-teeth"):
             smiles = []
         if not smiles:
+            omitted["teeth"] += 1
             warnings.append("No se detectaron dientes con confianza en un rostro; se omitió el blanqueamiento.")
+        else:
+            applied["teeth"] += 1
         for sx, sy, sw, sh in smiles[:1]:
             sy += h // 2
             mouth = image[y+sy:y+sy+sh, x+sx:x+sx+sw]
             hsv = cv2.cvtColor(mouth, cv2.COLOR_BGR2HSV)
             candidate = (hsv[:, :, 1] < 110) & (hsv[:, :, 2] > 105)
-            hsv[:, :, 1][candidate] = (hsv[:, :, 1][candidate] * .78).astype(np.uint8)
-            hsv[:, :, 2][candidate] = np.minimum(hsv[:, :, 2][candidate].astype(np.uint16) + 8, 235).astype(np.uint8)
+            hsv[:, :, 1][candidate] = (hsv[:, :, 1][candidate] * .72).astype(np.uint8)
+            hsv[:, :, 2][candidate] = np.minimum(hsv[:, :, 2][candidate].astype(np.uint16) + 12, 238).astype(np.uint8)
             image[y+sy:y+sy+sh, x+sx:x+sx+sw] = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-        treated += 1
-    return image, {"faces": len(faces), "treated": treated, "warnings": warnings, "backdrop": "unchanged"}
+        stage_times["eyesTeeth"] += round((time.perf_counter() - feature_started) * 1000)
+
+        lighting_started = time.perf_counter()
+        image, lighting_done = balance_face_light(image, cv2.bitwise_and(mask, cv2.bitwise_not(protected)))
+        applied["facialLighting"] += int(lighting_done)
+        omitted["facialLighting"] += int(not lighting_done)
+        stage_times["facialLighting"] += round((time.perf_counter() - lighting_started) * 1000)
+
+    reasons = {
+        "skin": "La máscara de piel no alcanzó la confianza obligatoria.",
+        "eyes": "No se detectaron ambos ojos con confianza.",
+        "teeth": "No se distinguieron dientes visibles con confianza.",
+        "facialLighting": "No hubo una región facial segura.",
+    }
+    operations = {
+        name: {**decision(count > 0, reasons[name] if omitted[name] else None, count), "omittedRegions": omitted[name]}
+        for name, count in applied.items()
+    }
+    operations["backdrop"] = decision(False, "No se detectó una interrupción confirmada del fondo.")
+    return image, {
+        "faces": len(faces), "treated": len(faces), "warnings": warnings, "backdrop": "unchanged",
+        "operations": operations, "stageMilliseconds": stage_times,
+    }
 
 
 def polygon_mask(shape, landmarks, indices, padding=0):
@@ -128,10 +238,12 @@ def polygon_mask(shape, landmarks, indices, padding=0):
 
 
 def enhance_eyes(image, landmarks):
+    enhanced = 0
     for eye_indices, iris_indices in ((LEFT_EYE, LEFT_IRIS), (RIGHT_EYE, RIGHT_IRIS)):
         eye_mask = polygon_mask(image.shape, landmarks, eye_indices, max(2, image.shape[1] // 1000))
         if not np.any(eye_mask):
             continue
+        enhanced += 1
         x, y, w, h = cv2.boundingRect(eye_mask)
         region = image[y:y+h, x:x+w]
         local_mask = eye_mask[y:y+h, x:x+w].astype(np.float32)[:, :, None] / 255
@@ -148,7 +260,7 @@ def enhance_eyes(image, landmarks):
                 & (red.astype(np.float32) > blue * 1.5)
             )
             red[red_pixels] = ((green[red_pixels].astype(np.uint16) + blue[red_pixels].astype(np.uint16)) // 2).astype(np.uint8)
-    return image
+    return image, enhanced == 2
 
 
 def whiten_teeth(image, landmarks):
@@ -350,6 +462,9 @@ def confident_segmentation(category_mask, confidence_masks):
 def apply_mediapipe(image, level, model_directory):
     import mediapipe as mp
 
+    total_started = time.perf_counter()
+    stage_times = {"analysis": 0, "skin": 0, "eyesTeeth": 0, "facialLighting": 0, "backdrop": 0}
+    analysis_started = time.perf_counter()
     face_model = model_directory / "face_landmarker.task"
     segment_model = model_directory / "selfie_multiclass_256x256.tflite"
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -386,8 +501,10 @@ def apply_mediapipe(image, level, model_directory):
             category_mask = cv2.resize(category_mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
     else:
         warnings.append("Falta el modelo local de segmentación; se omitió el suavizado de piel.")
+    stage_times["analysis"] = round((time.perf_counter() - analysis_started) * 1000)
 
     backdrop = "omitted"
+    backdrop_started = time.perf_counter()
     if category_mask is not None:
         person_mask = np.where(category_mask > 0, 255, 0).astype(np.uint8)
         image, backdrop, backdrop_warning = complete_uniform_backdrop(image, person_mask, segmentation_confident)
@@ -395,13 +512,25 @@ def apply_mediapipe(image, level, model_directory):
             warnings.append(backdrop_warning)
     else:
         warnings.append("Falta la segmentación local; se omitió el completado del fondo.")
+    stage_times["backdrop"] = round((time.perf_counter() - backdrop_started) * 1000)
 
     if not face_landmarks:
         if face_model.is_file():
             warnings.append("No se detectaron rostros; no se aplicó retoque facial.")
-        return image, {"faces": 0, "treated": 0, "warnings": warnings, "backdrop": backdrop}
+        no_face = "No se detectaron rostros."
+        return image, {
+            "faces": 0, "treated": 0, "warnings": warnings, "backdrop": backdrop,
+            "operations": {
+                "skin": decision(False, no_face), "eyes": decision(False, no_face),
+                "teeth": decision(False, no_face), "facialLighting": decision(False, no_face),
+                "backdrop": decision(backdrop == "completed", None if backdrop == "completed" else "El fondo no cumplió los límites de confianza.", 1 if backdrop == "completed" else 0),
+            },
+            "stageMilliseconds": stage_times,
+        }
 
     treated = 0
+    applied = {"skin": 0, "eyes": 0, "teeth": 0, "facialLighting": 0}
+    omitted = {"skin": 0, "eyes": 0, "teeth": 0, "facialLighting": 0}
     for landmarks in face_landmarks:
         face_mask = polygon_mask(image.shape, landmarks, FACE_OVAL)
         eyes_and_mouth = cv2.bitwise_or(
@@ -416,20 +545,44 @@ def apply_mediapipe(image, level, model_directory):
                 skin_mask = candidate
             else:
                 warnings.append("No se segmentó piel con confianza en un rostro; se omitió su suavizado.")
-        if level > 0 and skin_mask is not None and np.any(skin_mask):
-            x, y, w, h = cv2.boundingRect(face_mask)
-            region = image[y:y+h, x:x+w]
-            local_mask = skin_mask[y:y+h, x:x+w]
-            smooth = cv2.bilateralFilter(region, 7 if level == 1 else 9, 28 if level == 1 else 42, 28 if level == 1 else 42)
-            alpha = cv2.GaussianBlur(local_mask, (0, 0), max(2, w / 180)).astype(np.float32)[:, :, None] / 255
-            strength = .24 if level == 1 else .38
-            image[y:y+h, x:x+w] = np.clip(region * (1 - alpha * strength) + smooth * alpha * strength, 0, 255).astype(np.uint8)
-        image = enhance_eyes(image, landmarks)
+        skin_started = time.perf_counter()
+        image, skin_done = polish_skin(image, skin_mask, level) if skin_mask is not None else (image, False)
+        applied["skin"] += int(skin_done)
+        omitted["skin"] += int(not skin_done)
+        stage_times["skin"] += round((time.perf_counter() - skin_started) * 1000)
+        features_started = time.perf_counter()
+        image, eyes_done = enhance_eyes(image, landmarks)
+        applied["eyes"] += int(eyes_done)
+        omitted["eyes"] += int(not eyes_done)
+        if not eyes_done:
+            warnings.append("No se detectaron ambos ojos con confianza en un rostro; se omitió su mejora.")
         image, teeth_found = whiten_teeth(image, landmarks)
+        applied["teeth"] += int(teeth_found)
+        omitted["teeth"] += int(not teeth_found)
         if not teeth_found:
             warnings.append("No se distinguieron dientes visibles con confianza; se omitió el blanqueamiento.")
+        stage_times["eyesTeeth"] += round((time.perf_counter() - features_started) * 1000)
+        lighting_started = time.perf_counter()
+        image, lighting_done = balance_face_light(image, cv2.bitwise_and(face_mask, cv2.bitwise_not(eyes_and_mouth)))
+        applied["facialLighting"] += int(lighting_done)
+        omitted["facialLighting"] += int(not lighting_done)
+        stage_times["facialLighting"] += round((time.perf_counter() - lighting_started) * 1000)
         treated += 1
-    return image, {"faces": len(face_landmarks), "treated": treated, "warnings": warnings, "backdrop": backdrop}
+    operation_reasons = {
+        "skin": "Una o más regiones de piel no alcanzaron la confianza obligatoria.",
+        "eyes": "Uno o más pares de ojos no alcanzaron la confianza obligatoria.",
+        "teeth": "No se distinguieron dientes visibles con confianza en uno o más rostros.",
+        "facialLighting": "Una o más regiones faciales no fueron seguras.",
+    }
+    operations = {
+        name: {**decision(count > 0, operation_reasons[name] if omitted[name] else None, count), "omittedRegions": omitted[name]}
+        for name, count in applied.items()
+    }
+    operations["backdrop"] = decision(backdrop == "completed", None if backdrop == "completed" else "El fondo no requirió completado o no alcanzó la confianza obligatoria.", 1 if backdrop == "completed" else 0)
+    return image, {
+        "faces": len(face_landmarks), "treated": treated, "warnings": warnings, "backdrop": backdrop,
+        "operations": operations, "stageMilliseconds": stage_times,
+    }
 
 
 def main():
@@ -438,9 +591,15 @@ def main():
     controlled_arg = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "-" else ""
     default_models = Path(os.environ.get("SMARTSTUDIO_MODEL_DIR", Path.cwd() / ".smartstudio-data" / "models"))
     model_directory = Path(sys.argv[5]) if len(sys.argv) > 5 else default_models
-    image = cv2.imread(source, cv2.IMREAD_COLOR)
-    if image is None:
+    source_image = cv2.imread(source, cv2.IMREAD_UNCHANGED)
+    if source_image is None:
         raise RuntimeError("No se pudo leer la imagen para el retoque facial.")
+    if source_image.ndim == 2:
+        source_image = cv2.cvtColor(source_image, cv2.COLOR_GRAY2BGR)
+    if source_image.shape[2] > 3:
+        source_image = source_image[:, :, :3]
+    source_is_16_bit = source_image.dtype == np.uint16
+    image = np.round(source_image.astype(np.float32) / 257).astype(np.uint8) if source_is_16_bit else source_image
 
     if controlled_arg.startswith("controlled"):
         image, result = apply_controlled(image, level, controlled_arg)
@@ -449,18 +608,35 @@ def main():
             image, result = apply_mediapipe(image, level, model_directory)
         except Exception as error:
             shutil.copyfile(source, destination)
+            omitted_reason = f"MediaPipe no estuvo disponible; se omitió el retoque: {error}"
             print(json.dumps({
                 "faces": 0,
                 "treated": 0,
-                "warnings": [f"MediaPipe no estuvo disponible; se omitió el retoque: {error}"],
+                "warnings": [omitted_reason],
                 "backdrop": "omitted",
+                "operations": {
+                    "skin": decision(False, omitted_reason), "eyes": decision(False, omitted_reason),
+                    "teeth": decision(False, omitted_reason), "facialLighting": decision(False, omitted_reason),
+                    "backdrop": decision(False, omitted_reason),
+                },
+                "stageMilliseconds": {"analysis": 0, "skin": 0, "eyesTeeth": 0, "facialLighting": 0, "backdrop": 0},
             }))
             return
 
     if result["faces"] == 0 and result["backdrop"] != "completed":
         shutil.copyfile(source, destination)
-    elif not cv2.imwrite(destination, image, [cv2.IMWRITE_JPEG_QUALITY, 94]):
-        raise RuntimeError("No se pudo guardar el retoque facial.")
+    else:
+        if source_is_16_bit:
+            source_preview = np.round(source_image.astype(np.float32) / 257).astype(np.int32)
+            correction = image.astype(np.int32) - source_preview
+            output = np.clip(source_image.astype(np.int32) + correction * 257, 0, 65535).astype(np.uint16)
+        elif Path(destination).suffix.lower() in (".tif", ".tiff"):
+            output = image.astype(np.uint16) * 257
+        else:
+            output = image
+        parameters = [cv2.IMWRITE_TIFF_COMPRESSION, 5] if Path(destination).suffix.lower() in (".tif", ".tiff") else [cv2.IMWRITE_JPEG_QUALITY, 94]
+        if not cv2.imwrite(destination, output, parameters):
+            raise RuntimeError("No se pudo guardar el retoque facial.")
     print(json.dumps(result))
 
 

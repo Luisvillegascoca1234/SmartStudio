@@ -233,6 +233,7 @@ export class OperationsService {
       }
     }
     await visit(path.join(this.dataDirectory, "events"))
+    await visit(path.join(this.dataDirectory, "recipes"))
     try {
       await access(path.join(this.dataDirectory, "workflow-state.json"))
       files.push(path.join(this.dataDirectory, "workflow-state.json"))

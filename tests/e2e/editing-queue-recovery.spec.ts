@@ -23,7 +23,7 @@ async function completeSelectedSession(application: TestApplication): Promise<st
   return baseName
 }
 
-test("procesa en orden, permite cancelar y reintentar sin bloquear nuevas sesiones", async ({ browser }) => {
+test("procesa en orden y permite cancelar sin convertirlo en reintento técnico", async ({ browser }) => {
   const application = await TestApplication.start(browser, "smartstudio-editing-queue-", {
     testFeatures: true,
     editingProcessingDelayMilliseconds: 3_000,
@@ -43,15 +43,16 @@ test("procesa en orden, permite cancelar y reintentar sin bloquear nuevas sesion
     await expect(firstCard.getByText("Cancelado", { exact: true })).toBeVisible()
     await expect(secondCard.getByText("Procesando", { exact: true })).toBeVisible()
 
-    await firstCard.getByRole("button", { name: "Reintentar edición" }).click()
-    await expect(firstCard.getByText("En cola", { exact: true })).toBeVisible()
+    await expect(firstCard.getByRole("button", { name: "Reintentar edición" })).toHaveCount(0)
+    const cancelledRetryStatus = await application.page.evaluate(async (jobId) => (
+      await fetch(`/api/editing/${jobId}/retry`, { method: "POST" })
+    ).status, (await application.state()).editingJobs[0].id)
+    expect(cancelledRetryStatus).toBe(409)
     await expect(secondCard.getByText("Lista para revisar", { exact: true })).toBeVisible()
-    await expect(firstCard.getByText("Procesando", { exact: true })).toBeVisible()
-    await expect(firstCard.getByText("Lista para revisar", { exact: true })).toBeVisible()
 
     const completed = await application.state()
-    expect(completed.editingJobs.map((job) => job.status)).toEqual(["review", "review"])
-    expect(completed.editingJobs.map((job) => job.attempts)).toEqual([2, 1])
+    expect(completed.editingJobs.map((job) => job.status)).toEqual(["cancelled", "review"])
+    expect(completed.editingJobs.map((job) => job.attempts)).toEqual([1, 1])
   } finally {
     await application.close()
   }

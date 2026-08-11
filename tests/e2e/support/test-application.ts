@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { FastifyInstance } from "fastify"
@@ -13,6 +13,7 @@ type TestApplicationOptions = {
   testFeatures?: boolean
   path?: string
   editingProcessingDelayMilliseconds?: number
+  editingDeliveryDelayMilliseconds?: number
   controlledPortraitFixture?: PortraitFixture
   simulatedCaptureProfile?: SimulationProfile
 }
@@ -63,12 +64,18 @@ export class TestApplication {
     return readFile(path.join(this.dataDirectory, relativePath))
   }
 
+  async listDataFiles(): Promise<string[]> {
+    const entries = await readdir(this.dataDirectory, { recursive: true, withFileTypes: true })
+    return entries.filter((entry) => entry.isFile()).map((entry) => path.relative(this.dataDirectory, path.join(entry.parentPath, entry.name)))
+  }
+
   private async open(): Promise<void> {
     this.server = await createSmartStudioServer({
       dataDirectory: this.dataDirectory,
       staticDirectory: path.resolve("dist/client"),
       testFeatures: this.options.testFeatures,
       editingProcessingDelayMilliseconds: this.options.editingProcessingDelayMilliseconds,
+      editingDeliveryDelayMilliseconds: this.options.editingDeliveryDelayMilliseconds,
       controlledPortraitFixture: this.options.controlledPortraitFixture,
       simulatedCaptureProfile: this.options.simulatedCaptureProfile,
     })

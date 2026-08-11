@@ -2,8 +2,10 @@ import { mkdir, rename, rm } from "node:fs/promises"
 import path from "node:path"
 import sharp from "sharp"
 
-import { captureById, type Capture, type EditingJob, type EditingProfile, type WorkflowState } from "../shared/workflow.js"
+import { captureById, type Capture, type EditingJob, type EditingProfile, type ProcessDiagnostic, type WorkflowState } from "../shared/workflow.js"
 import { WorkflowStore } from "./workflow-store.js"
+import { ensureEventPolishedRecipe } from "./event-polished-recipe.js"
+import { sha256File } from "./file-hash.js"
 import { RawDeveloper, RawDevelopmentError } from "./raw-developer.js"
 import { PortraitRetoucher, type PortraitFixture, type PortraitResult } from "./portrait-retoucher.js"
 
@@ -14,6 +16,19 @@ type EditingOperation =
   | { kind: "preview"; jobId: string }
   | { kind: "delivery"; jobId: string; versionId: string }
 
+type MasterProvenance = {
+  developer: "controlled" | "darktable" | "rawpy" | "jpeg"
+  developerVersion: string
+  developerParameters: Record<string, string | number | boolean>
+  developmentWarnings: string[]
+  recipeRelativePath: string
+  recipeVersion: number
+  recipeSha256: string
+  masterRelativePath: string
+  masterSha256: string
+  previewSha256: string
+}
+
 export class EditingService {
   private readonly queue: EditingOperation[] = []
   private readonly cancellationRequests = new Set<string>()
@@ -21,6 +36,7 @@ export class EditingService {
   private drainPromise: Promise<void> | null = null
   private controlledFailurePending = false
   private controlledDeliveryFailurePending = false
+  private readonly activeProcessControllers = new Map<string, AbortController>()
   private readonly rawDeveloper: RawDeveloper
   private readonly portraitRetoucher: PortraitRetoucher
 
@@ -28,6 +44,7 @@ export class EditingService {
     private readonly store: WorkflowStore,
     private readonly dataDirectory: string,
     private readonly controlledProcessingDelayMilliseconds = 0,
+    private readonly controlledDeliveryDelayMilliseconds = 0,
     private readonly assertCanFinish: () => Promise<void> = async () => undefined,
     private readonly controlledPortraitFixture?: PortraitFixture,
   ) {
@@ -84,6 +101,7 @@ export class EditingService {
       throw new Error("Solo puedes cancelar una edición en cola o en proceso.")
     }
     this.cancellationRequests.add(jobId)
+    this.activeProcessControllers.get(jobId)?.abort()
     const queuedIndex = this.queue.findIndex((operation) => operation.kind === "preview" && operation.jobId === jobId)
     if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1)
     await this.removePartialResult(job)
@@ -99,8 +117,8 @@ export class EditingService {
 
   async retry(jobId: string): Promise<WorkflowState> {
     const job = findJob(this.store.snapshot(), jobId)
-    if (!job || !new Set(["failed", "interrupted", "cancelled"]).has(job.status)) {
-      throw new Error("Solo puedes reintentar una edición fallida, interrumpida o cancelada.")
+    if (!job || !new Set(["failed", "interrupted"]).has(job.status)) {
+      throw new Error("Solo puedes reintentar una edición fallida o interrumpida.")
     }
     while (this.currentOperation?.kind === "preview" && this.currentOperation.jobId === jobId) await this.delay(10)
     await this.removePartialResult(job)
@@ -256,7 +274,9 @@ export class EditingService {
     const snapshot = this.store.snapshot()
     const job = findJob(snapshot, jobId)
     const version = job?.versions.find((item) => item.id === (versionId ?? job.currentVersionId))
-    if (!job || !version) throw new Error("La versión todavía no está lista para aprobar.")
+    if (!job || !version || job.status === "rejected" || version.approvalStatus === "rejected") {
+      throw new Error("La versión todavía no está lista para aprobar.")
+    }
     await this.store.mutate((state) => {
       const current = findJob(state, jobId)!
       for (const item of current.versions) {
@@ -276,18 +296,55 @@ export class EditingService {
     return result
   }
 
+  async reject(jobId: string, versionId?: string): Promise<WorkflowState> {
+    const snapshot = this.store.snapshot()
+    const job = findJob(snapshot, jobId)
+    const version = job?.versions.find((item) => item.id === (versionId ?? job.currentVersionId))
+    if (!job || job.status !== "review" || !version || !new Set(["review", "revoked"]).has(version.approvalStatus)) {
+      throw new Error("La versión todavía no está lista para rechazar.")
+    }
+    const result = await this.store.mutate((state) => {
+      const current = findJob(state, jobId)!
+      const selected = current.versions.find((item) => item.id === version.id)!
+      selected.approvalStatus = "rejected"
+      selected.revokedAt = null
+      selected.fullRelativePath = null
+      selected.deliveryStatus = "not-requested"
+      selected.deliveryError = null
+      selected.width = null
+      selected.height = null
+      current.status = "rejected"
+      current.approvedVersionId = null
+      current.approvedAt = null
+      current.finishedAt = new Date().toISOString()
+    })
+    await this.removeDeliveryResult(job, version)
+    return result
+  }
+
   async revokeApproval(jobId: string): Promise<WorkflowState> {
     const job = findJob(this.store.snapshot(), jobId)
     if (!job?.approvedVersionId) throw new Error("La edición no tiene una aprobación vigente.")
-    return this.store.mutate((state) => {
+    const version = job.versions.find((item) => item.id === job.approvedVersionId)!
+    const deliveryWasGenerating = version.deliveryStatus === "generating"
+    const result = await this.store.mutate((state) => {
       const current = findJob(state, jobId)!
-      const version = current.versions.find((item) => item.id === current.approvedVersionId)!
-      version.approvalStatus = "revoked"
-      version.revokedAt = new Date().toISOString()
+      const selected = current.versions.find((item) => item.id === current.approvedVersionId)!
+      selected.approvalStatus = "revoked"
+      selected.revokedAt = new Date().toISOString()
+      if (selected.deliveryStatus === "generating") {
+        selected.deliveryStatus = "not-requested"
+        selected.deliveryError = null
+        selected.fullRelativePath = null
+        selected.width = null
+        selected.height = null
+      }
       current.approvedVersionId = null
       current.approvedAt = null
       current.status = "review"
     })
+    if (deliveryWasGenerating) await this.removeDeliveryResult(job, version)
+    return result
   }
 
   async retryDelivery(jobId: string): Promise<WorkflowState> {
@@ -350,10 +407,17 @@ export class EditingService {
 
   private async process(jobId: string): Promise<void> {
     let temporaryPath: string | null = null
+    let temporaryMasterPath: string | null = null
+    let publishedMasterPath: string | null = null
     let portraitResult: PortraitResult | null = null
     let lensCorrectionApplied = false
     let processingRoute: "cpu" | "gpu" = "cpu"
+    let accelerationEvidence: EditingJob["accelerationEvidence"] = "inconclusive"
     let usedRawFallback = false
+    const processDiagnostics: ProcessDiagnostic[] = []
+    let provenance: MasterProvenance | null = null
+    let developmentMilliseconds = 0
+    let exportMilliseconds = 0
     try {
       if (this.controlledProcessingDelayMilliseconds > 0) {
         await this.delayUntilCancelled(jobId, Math.ceil(this.controlledProcessingDelayMilliseconds / 2))
@@ -389,15 +453,36 @@ export class EditingService {
       const previewRelativePath = this.previewRelativePath(job, versionNumber)
       const previewPath = path.join(this.dataDirectory, previewRelativePath)
       temporaryPath = `${previewPath}.tmp`
+      const masterRelativePath = path.join("events", job.eventId, "sessions", job.sessionId, "edits", `${job.id}-v${versionNumber}-master.tif`)
+      const masterPath = path.join(this.dataDirectory, masterRelativePath)
+      temporaryMasterPath = `${masterPath}.tmp.tif`
       await mkdir(path.dirname(previewPath), { recursive: true })
       const origin: "raw" | "jpeg" = job.jpegFallbackDecision === "authorized" || capture.emergencyJpegAuthorized ? "jpeg" : "raw"
       await this.assertCanFinish()
       try {
-        const rendered = await this.renderEditedImage(job, capture, temporaryPath, origin, true)
+        const processController = new AbortController()
+        this.activeProcessControllers.set(jobId, processController)
+        const rendered = await this.renderMaster(job, capture, temporaryMasterPath, origin, processController.signal, (diagnostic) => processDiagnostics.push(diagnostic))
         portraitResult = rendered.portraitResult
+        developmentMilliseconds = rendered.developmentMilliseconds
         lensCorrectionApplied = rendered.lensCorrectionApplied
         processingRoute = rendered.processingRoute
+        accelerationEvidence = rendered.accelerationEvidence
         usedRawFallback = rendered.usedRawFallback
+        await this.validateMaster(temporaryMasterPath)
+        await rm(masterPath, { force: true })
+        await rename(temporaryMasterPath, masterPath)
+        publishedMasterPath = masterPath
+        temporaryMasterPath = null
+        const exportStartedAt = Date.now()
+        await sharp(masterPath).rotate().toColourspace("srgb").resize(960, 960, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 86, chromaSubsampling: "4:4:4" }).toFile(temporaryPath)
+        exportMilliseconds = Date.now() - exportStartedAt
+        const masterSha256 = await sha256File(masterPath)
+        const previewSha256 = await sha256File(temporaryPath)
+        rendered.provenance.masterSha256 = masterSha256
+        rendered.provenance.previewSha256 = previewSha256
+        rendered.provenance.masterRelativePath = masterRelativePath
+        provenance = rendered.provenance
       } catch (error) {
         if (!(error instanceof RawDevelopmentError)) throw error
         await this.store.mutate((state) => {
@@ -409,6 +494,7 @@ export class EditingService {
           waiting.origin = null
           waiting.finishedAt = new Date().toISOString()
           waiting.error = error.message
+          waiting.processDiagnostics.push(...processDiagnostics)
         })
         return
       }
@@ -440,6 +526,20 @@ export class EditingService {
           adjustments: structuredClone(completed.adjustments),
           origin: origin!,
           previewRelativePath,
+          previewSha256: provenance!.previewSha256,
+          previewMasterSha256: provenance!.masterSha256,
+          masterId: `master-${provenance!.masterSha256}`,
+          masterRelativePath: provenance!.masterRelativePath,
+          masterSha256: provenance!.masterSha256,
+          originalSha256: origin === "raw" ? capture.rawSha256 : capture.jpegSha256,
+          recipeRelativePath: provenance!.recipeRelativePath,
+          recipeVersion: provenance!.recipeVersion,
+          recipeSha256: provenance!.recipeSha256,
+          developer: provenance!.developer,
+          developerVersion: provenance!.developerVersion,
+          developerParameters: provenance!.developerParameters,
+          developmentWarnings: provenance!.developmentWarnings,
+          iccProfile: "sRGB",
           approvalStatus: "review" as const,
           approvedAt: null,
           revokedAt: null,
@@ -456,8 +556,16 @@ export class EditingService {
         completed.faceCount = portraitResult?.faces ?? 0
         completed.portraitWarnings = portraitResult?.warnings ?? []
         completed.backdropCompletion = portraitResult?.backdrop ?? "omitted"
+        if (portraitResult) completed.retouchDecisions = portraitResult.operations
         completed.lensCorrectionApplied = lensCorrectionApplied
+        completed.processDiagnostics.push(...processDiagnostics)
         completed.metrics.processingRoute = processingRoute
+        completed.accelerationEvidence = accelerationEvidence
+        completed.metrics.stages = {
+          ...(portraitResult?.stageMilliseconds ?? completed.metrics.stages),
+          development: developmentMilliseconds,
+          export: exportMilliseconds,
+        }
         completed.accelerationWarning = processingRoute === "gpu"
           ? null
           : usedRawFallback
@@ -465,19 +573,29 @@ export class EditingService {
             : "Ruta CPU activa; la edición sigue disponible con menor rendimiento."
         completed.metrics.previewMilliseconds = Date.now() - new Date(completed.startedAt!).getTime()
       })
+      publishedMasterPath = null
     } catch (error) {
       if (temporaryPath) await rm(temporaryPath, { force: true }).catch(() => undefined)
-      if (!this.cancellationRequests.has(jobId)) {
+      if (temporaryMasterPath) await rm(temporaryMasterPath, { force: true }).catch(() => undefined)
+      if (publishedMasterPath) await rm(publishedMasterPath, { force: true }).catch(() => undefined)
+      if (this.cancellationRequests.has(jobId)) {
+        await this.store.mutate((state) => {
+          const job = findJob(state, jobId)
+          if (job) job.processDiagnostics.push(...processDiagnostics)
+        }).catch(() => undefined)
+      } else {
         await this.store.mutate((state) => {
           const job = findJob(state, jobId)
           if (!job || job.status === "cancelled") return
           job.status = "failed"
           job.finishedAt = new Date().toISOString()
           job.error = error instanceof Error ? error.message : "No se pudo generar la primera edición."
+          job.processDiagnostics.push(...processDiagnostics)
           job.metrics.failures += 1
         }).catch(() => undefined)
       }
     } finally {
+      this.activeProcessControllers.delete(jobId)
       this.cancellationRequests.delete(jobId)
     }
   }
@@ -486,8 +604,13 @@ export class EditingService {
     return path.join("events", job.eventId, "sessions", job.sessionId, "edits", `${job.id}-v${versionNumber}-preview.jpg`)
   }
 
+  private masterRelativePath(job: EditingJob, versionNumber = job.versions.length + 1): string {
+    return path.join("events", job.eventId, "sessions", job.sessionId, "edits", `${job.id}-v${versionNumber}-master.tif`)
+  }
+
   private async removePartialResult(job: EditingJob): Promise<void> {
     const previewPath = path.join(this.dataDirectory, this.previewRelativePath(job))
+    const masterPath = path.join(this.dataDirectory, this.masterRelativePath(job))
     await Promise.all([
       rm(previewPath, { force: true }),
       rm(`${previewPath}.tmp`, { force: true }),
@@ -495,7 +618,29 @@ export class EditingService {
       rm(`${previewPath}.tmp.raw.tif`, { force: true }),
       rm(`${previewPath}.tmp.styled.jpg`, { force: true }),
       rm(`${previewPath}.tmp.portrait.jpg`, { force: true }),
+      rm(masterPath, { force: true }),
+      rm(`${masterPath}.tmp.tif`, { force: true }),
+      rm(`${masterPath}.tmp.tif.developed.tif`, { force: true }),
+      rm(`${masterPath}.tmp.tif.recipe.tif`, { force: true }),
+      rm(`${masterPath}.tmp.tif.portrait.tif`, { force: true }),
     ])
+  }
+
+  private async removeDeliveryResult(job: EditingJob, version: EditingJob["versions"][number]): Promise<void> {
+    this.activeProcessControllers.get(job.id)?.abort()
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const operation = this.queue[index]
+      if (operation.kind === "delivery" && operation.jobId === job.id && operation.versionId === version.id) this.queue.splice(index, 1)
+    }
+    const fullRelativePath = version.fullRelativePath ?? path.join("events", job.eventId, "sessions", job.sessionId, "edits", `${job.id}-v${version.number}-full.jpg`)
+    const fullPath = path.join(this.dataDirectory, fullRelativePath)
+    await Promise.all([rm(fullPath, { force: true }), rm(`${fullPath}.tmp`, { force: true })])
+  }
+
+  private deliveryIsApproved(jobId: string, versionId: string): boolean {
+    const job = findJob(this.store.snapshot(), jobId)
+    const version = job?.versions.find((item) => item.id === versionId)
+    return job?.status === "approved" && job.approvedVersionId === versionId && version?.approvalStatus === "approved"
   }
 
   private async delay(milliseconds: number): Promise<void> {
@@ -509,64 +654,103 @@ export class EditingService {
     }
   }
 
-  private async renderEditedImage(
+  private async renderMaster(
     job: EditingJob,
     capture: Capture,
     destination: string,
     origin: "raw" | "jpeg",
-    lightweight: boolean,
-  ): Promise<{ lensCorrectionApplied: boolean; portraitResult: PortraitResult; processingRoute: "cpu" | "gpu"; usedRawFallback: boolean }> {
+    signal?: AbortSignal,
+    onDiagnostic?: (diagnostic: ProcessDiagnostic) => void,
+  ): Promise<{ lensCorrectionApplied: boolean; portraitResult: PortraitResult; processingRoute: "cpu" | "gpu"; accelerationEvidence: EditingJob["accelerationEvidence"]; usedRawFallback: boolean; developmentMilliseconds: number; provenance: MasterProvenance }> {
     if (!capture.jpegRelativePath) throw new Error("La fotografía necesita su JPEG asociado para generar la edición.")
     const jpegPath = path.join(this.dataDirectory, capture.jpegRelativePath)
-    const developedRawPath = `${destination}.raw.tif`
-    const styledPath = `${destination}.styled.jpg`
-    const portraitPath = `${destination}.portrait.jpg`
-    let sourceImagePath = jpegPath
+    const developedPath = `${destination}.developed.tif`
+    const recipeAppliedPath = `${destination}.recipe.tif`
+    const portraitPath = `${destination}.portrait.tif`
+    const profiledPath = `${destination}.profiled.tif`
+    const recipe = await ensureEventPolishedRecipe(this.dataDirectory)
+    let sourceImagePath = developedPath
     let lensCorrectionApplied = false
     let processingRoute: "cpu" | "gpu" = "cpu"
     let usedRawFallback = false
+    let accelerationEvidence: EditingJob["accelerationEvidence"] = origin === "jpeg" ? "cpu" : "inconclusive"
+    let developer: MasterProvenance["developer"] = "jpeg"
+    let developerVersion = "jpeg-input"
+    let developerParameters: Record<string, string | number | boolean> = { source: "authorized JPEG", conversion: "TIFF 16-bit sRGB" }
+    let developmentWarnings = origin === "jpeg" ? ["Origen JPEG autorizado: hay menos rango tonal y margen de corrección que con RAW."] : []
+    const developmentStartedAt = Date.now()
     try {
       if (origin === "raw") {
-        const rawResult = await this.rawDeveloper.develop(capture.rawRelativePath, jpegPath, developedRawPath)
-        sourceImagePath = developedRawPath
+        const rawResult = await this.rawDeveloper.develop(capture.rawRelativePath, jpegPath, recipe.path, developedPath, signal, onDiagnostic)
         lensCorrectionApplied = rawResult.lensCorrectionApplied
         processingRoute = rawResult.processingRoute
         usedRawFallback = rawResult.method === "rawpy"
+        developer = rawResult.method
+        developerVersion = rawResult.developerVersion
+        developerParameters = rawResult.parameters
+        developmentWarnings = rawResult.warnings
+        accelerationEvidence = rawResult.accelerationEvidence
+      } else {
+        await sharp(jpegPath).rotate().toColourspace("rgb16").tiff({ compression: "lzw" }).toFile(developedPath)
       }
-      const temperature = job.adjustments.temperature
-      await sharp(sourceImagePath)
-        .rotate()
-        .recomb([
-          [1 + temperature * 0.06, 0, 0],
-          [0, 1, 0],
-          [0, 0, 1 - temperature * 0.06],
-        ])
-        .gamma(1.06)
-        .linear(0.96, 4)
-        .modulate({
-          brightness: 1.02 + job.adjustments.exposure * 0.1,
-          saturation: 1.05 + job.adjustments.colorIntensity * 0.1,
-        })
-        .median(3)
-        .sharpen({ sigma: 0.55, m1: 0.35, m2: 1 })
-        .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
-        .toFile(styledPath)
+      if (developer !== "darktable") {
+        await sharp(developedPath)
+          .rotate()
+          .gamma(1.08)
+          .linear(0.97, 3)
+          .modulate({ brightness: 1.04, saturation: 1.10 })
+          .median(3)
+          .sharpen({ sigma: 0.6, m1: 0.45, m2: 1.2 })
+          .toColourspace("rgb16")
+          .tiff({ compression: "lzw" })
+          .toFile(recipeAppliedPath)
+        sourceImagePath = recipeAppliedPath
+      }
       const portraitResult = await this.portraitRetoucher.apply(
-        styledPath,
+        sourceImagePath,
         portraitPath,
         job.adjustments.skinSmoothing,
         capture.source === "simulated-folder" ? this.controlledPortraitFixture ?? { kind: "single" } : undefined,
+        signal,
+        onDiagnostic,
       )
-      let output = sharp(portraitPath).rotate().toColourspace("srgb")
-      if (lightweight) output = output.resize(960, 960, { fit: "inside", withoutEnlargement: true })
-      await output.jpeg({ quality: lightweight ? 86 : 94, chromaSubsampling: "4:4:4" }).toFile(destination)
-      return { lensCorrectionApplied, portraitResult, processingRoute, usedRawFallback }
+      await sharp(portraitPath).toColourspace("rgb16").withIccProfile("srgb").tiff({ compression: "lzw" }).toFile(profiledPath)
+      await this.validateMaster(profiledPath)
+      await rename(profiledPath, destination)
+      return {
+        lensCorrectionApplied,
+        portraitResult,
+        processingRoute,
+        accelerationEvidence,
+        usedRawFallback,
+        developmentMilliseconds: Date.now() - developmentStartedAt,
+        provenance: {
+          developer,
+          developerVersion,
+          developerParameters,
+          developmentWarnings,
+          recipeRelativePath: recipe.relativePath,
+          recipeVersion: recipe.version,
+          recipeSha256: recipe.sha256,
+          masterRelativePath: "",
+          masterSha256: "",
+          previewSha256: "",
+        },
+      }
     } finally {
       await Promise.all([
-        rm(developedRawPath, { force: true }),
-        rm(styledPath, { force: true }),
+        rm(developedPath, { force: true }),
+        rm(recipeAppliedPath, { force: true }),
         rm(portraitPath, { force: true }),
+        rm(profiledPath, { force: true }),
       ])
+    }
+  }
+
+  private async validateMaster(filePath: string): Promise<void> {
+    const metadata = await sharp(filePath).metadata()
+    if (metadata.format !== "tiff" || metadata.channels !== 3 || metadata.depth !== "ushort" || (metadata.space !== "rgb16" && metadata.space !== "srgb") || !metadata.icc || !metadata.width || !metadata.height) {
+      throw new Error("El máster no es un TIFF sRGB legible de tres canales y 16 bits.")
     }
   }
 
@@ -575,8 +759,12 @@ export class EditingService {
     const snapshot = this.store.snapshot()
     const job = findJob(snapshot, jobId)!
     const version = job.versions.find((item) => item.id === versionId)!
+    if (!this.deliveryIsApproved(jobId, versionId)) return snapshot
     const capture = captureById(snapshot, job.captureId)
     if (!capture) throw new Error("La fotografía original asociada ya no está disponible.")
+    if (!version.masterRelativePath || !version.masterSha256 || version.previewMasterSha256 !== version.masterSha256) {
+      throw new Error("El máster asociado con la vista previa no está disponible o no es válido.")
+    }
     const fullRelativePath = path.join("events", job.eventId, "sessions", job.sessionId, "edits", `${job.id}-v${version.number}-full.jpg`)
     const fullPath = path.join(this.dataDirectory, fullRelativePath)
     const temporaryPath = `${fullPath}.tmp`
@@ -585,13 +773,14 @@ export class EditingService {
         this.controlledDeliveryFailurePending = false
         throw new Error("Fallo controlado al generar el JPEG completo.")
       }
+      if (this.controlledDeliveryDelayMilliseconds > 0) await this.delay(this.controlledDeliveryDelayMilliseconds)
       await this.assertCanFinish()
-      const renderJob: EditingJob = {
-        ...job,
-        profile: structuredClone(version.profile),
-        adjustments: structuredClone(version.adjustments),
-      }
-      await this.renderEditedImage(renderJob, capture, temporaryPath, version.origin, false)
+      const masterPath = path.join(this.dataDirectory, version.masterRelativePath)
+      await this.validateMaster(masterPath)
+      if (await sha256File(masterPath) !== version.masterSha256) throw new Error("El hash del máster ya no coincide con la versión revisada.")
+      const currentOriginalSha256 = version.origin === "raw" ? capture.rawSha256 : capture.jpegSha256
+      if (!currentOriginalSha256 || currentOriginalSha256 !== version.originalSha256) throw new Error("El original asociado ya no coincide con la versión revisada.")
+      await sharp(masterPath).rotate().toColourspace("srgb").jpeg({ quality: 94, chromaSubsampling: "4:4:4" }).toFile(temporaryPath)
       await this.assertCanFinish()
       const metadata = await sharp(temporaryPath).metadata()
       const previewMetadata = await sharp(path.join(this.dataDirectory, version.previewRelativePath)).metadata()
@@ -600,10 +789,16 @@ export class EditingService {
         !previewMetadata.width || !previewMetadata.height ||
         metadata.width < previewMetadata.width || metadata.height < previewMetadata.height
       ) throw new Error("El JPEG completo no superó la validación de lectura, asociación y dimensiones esperadas.")
+      if (!this.deliveryIsApproved(jobId, versionId)) {
+        await rm(temporaryPath, { force: true })
+        return this.store.snapshot()
+      }
       await rename(temporaryPath, fullPath)
-      return this.store.mutate((state) => {
+      let published = false
+      const result = await this.store.mutate((state) => {
         const current = findJob(state, jobId)!
         const selected = current.versions.find((item) => item.id === versionId)!
+        if (current.status !== "approved" || current.approvedVersionId !== versionId || selected.approvalStatus !== "approved") return
         selected.fullRelativePath = fullRelativePath
         selected.deliveryStatus = "ready"
         selected.deliveryError = null
@@ -612,9 +807,16 @@ export class EditingService {
         selected.backupStatus = "pending"
         selected.backupError = null
         current.metrics.deliveryMilliseconds = Date.now() - deliveryStartedAt
+        published = true
       })
+      if (!published) await rm(fullPath, { force: true })
+      return result
     } catch (error) {
       await rm(temporaryPath, { force: true })
+      if (!this.deliveryIsApproved(jobId, versionId)) {
+        await rm(fullPath, { force: true })
+        return this.store.snapshot()
+      }
       return this.store.mutate((state) => {
         const current = findJob(state, jobId)!
         const selected = current.versions.find((item) => item.id === versionId)!
@@ -623,6 +825,8 @@ export class EditingService {
         current.metrics.failures += 1
         current.metrics.deliveryMilliseconds = Date.now() - deliveryStartedAt
       })
+    } finally {
+      this.activeProcessControllers.delete(jobId)
     }
   }
 }

@@ -8,7 +8,7 @@ import { PortraitRetoucher } from "../../src/server/portrait-retoucher.js"
 import { TestApplication } from "./support/test-application.js"
 
 const sampleRgb = async (image: Buffer, xRatio: number, yRatio: number): Promise<number[]> => {
-  const { data, info } = await sharp(image).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+  const { data, info } = await sharp(image).removeAlpha().toColourspace("srgb").raw({ depth: "uchar" }).toBuffer({ resolveWithObject: true })
   const x = Math.min(info.width - 1, Math.round(info.width * xRatio))
   const y = Math.min(info.height - 1, Math.round(info.height * yRatio))
   const offset = (y * info.width + x) * 3
@@ -17,6 +17,113 @@ const sampleRgb = async (image: Buffer, xRatio: number, yRatio: number): Promise
 
 const colorDistance = (first: number[], second: number[]): number =>
   Math.sqrt(first.reduce((sum, channel, index) => sum + (channel - second[index]) ** 2, 0))
+
+const meanAbsoluteDifference = (first: Buffer, second: Buffer): number => {
+  let total = 0
+  for (let index = 0; index < first.length; index += 1) total += Math.abs(first[index] - second[index])
+  return total / first.length
+}
+
+const darkGeometry = async (image: Buffer, area: { left: number; top: number; width: number; height: number }) => {
+  const { data, info } = await sharp(image).extract(area).removeAlpha().toColourspace("srgb").raw({ depth: "uchar" }).toBuffer({ resolveWithObject: true })
+  let count = 0
+  let xTotal = 0
+  let yTotal = 0
+  let minX = info.width
+  let minY = info.height
+  let maxX = -1
+  let maxY = -1
+  for (let y = 0; y < info.height; y += 1) for (let x = 0; x < info.width; x += 1) {
+    const offset = (y * info.width + x) * 3
+    if (data[offset] + data[offset + 1] + data[offset + 2] > 180) continue
+    count += 1
+    xTotal += x
+    yTotal += y
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+  }
+  return { centroid: [xTotal / count, yTotal / count] as const, bounds: [minX, minY, maxX, maxY] as const, count }
+}
+
+test("hace visible el pulido de piel, conserva detalle y omite sólo una máscara incierta", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-skin-visible-"))
+  try {
+    const source = path.join(directory, "skin.png")
+    const polished = path.join(directory, "polished.tif")
+    const repeated = path.join(directory, "repeated.tif")
+    const uncertain = path.join(directory, "uncertain.tif")
+    const pixels = Buffer.alloc(600 * 500 * 3)
+    for (let index = 0; index < pixels.length; index += 3) {
+      const variation = ((index / 3 * 37) % 25) - 12
+      pixels[index] = 88 + variation
+      pixels[index + 1] = 109 + variation
+      pixels[index + 2] = 169 + variation
+    }
+    const noise = await sharp(pixels, { raw: { width: 600, height: 500, channels: 3 } }).png().toBuffer()
+    await sharp(noise).composite([{ input: Buffer.from(`<svg width="600" height="500" xmlns="http://www.w3.org/2000/svg"><rect x="400" y="300" width="160" height="180" rx="35" fill="#243342"/><circle cx="448" cy="133" r="10" fill="#321b17"/><circle cx="520" cy="133" r="10" fill="#321b17"/><circle cx="485" cy="202" r="7" fill="#4b2520"/></svg>`) }]).png().toFile(source)
+    const retoucher = new PortraitRetoucher()
+    const result = await retoucher.apply(source, polished, 2, { kind: "single" })
+    const again = await retoucher.apply(source, repeated, 2, { kind: "single" })
+    const uncertainResult = await retoucher.apply(source, uncertain, 2, { kind: "skin-uncertain" })
+    const [before, after] = await Promise.all([
+      sharp(source).extract({ left: 370, top: 35, width: 220, height: 260 }).removeAlpha().raw().toBuffer(),
+      sharp(polished).extract({ left: 370, top: 35, width: 220, height: 260 }).removeAlpha().raw().toBuffer(),
+    ])
+    expect(result.operations.skin).toMatchObject({ status: "applied", regions: 1, omittedRegions: 0 })
+    expect(meanAbsoluteDifference(before, after)).toBeGreaterThan(1.5)
+    expect((await sharp(polished).stats()).channels[0].stdev).toBeGreaterThan((await sharp(source).stats()).channels[0].stdev * .35)
+    const [moleBefore, skinBefore, moleAfter, skinAfter] = await Promise.all([
+      sampleRgb(await readFile(source), 485 / 600, 202 / 500), sampleRgb(await readFile(source), 465 / 600, 202 / 500),
+      sampleRgb(await readFile(polished), 485 / 600, 202 / 500), sampleRgb(await readFile(polished), 465 / 600, 202 / 500),
+    ])
+    expect(colorDistance(moleAfter, skinAfter)).toBeGreaterThan(colorDistance(moleBefore, skinBefore) * .65)
+    const sourceFile = await readFile(source)
+    const polishedFile = await readFile(polished)
+    const [eyeBefore, eyeAfter, irisBefore, irisAfter, bodyBefore, bodyAfter] = await Promise.all([
+      darkGeometry(sourceFile, { left: 430, top: 115, width: 38, height: 38 }),
+      darkGeometry(polishedFile, { left: 430, top: 115, width: 38, height: 38 }),
+      sampleRgb(sourceFile, 448 / 600, 133 / 500), sampleRgb(polishedFile, 448 / 600, 133 / 500),
+      sampleRgb(sourceFile, 450 / 600, 400 / 500), sampleRgb(polishedFile, 450 / 600, 400 / 500),
+    ])
+    expect(Math.hypot(eyeAfter.centroid[0] - eyeBefore.centroid[0], eyeAfter.centroid[1] - eyeBefore.centroid[1])).toBeLessThan(.75)
+    expect(eyeAfter.bounds).toEqual(eyeBefore.bounds)
+    expect(eyeAfter.count / eyeBefore.count).toBeGreaterThan(.9)
+    expect(eyeAfter.count / eyeBefore.count).toBeLessThan(1.1)
+    const chroma = (rgb: number[]) => rgb.map((channel) => channel / Math.max(1, rgb.reduce((sum, value) => sum + value, 0)))
+    expect(colorDistance(chroma(skinBefore), chroma(skinAfter))).toBeLessThan(.08)
+    expect(colorDistance(chroma(irisBefore), chroma(irisAfter))).toBeLessThan(.08)
+    expect(bodyAfter).toEqual(bodyBefore)
+    expect(uncertainResult.operations).toMatchObject({
+      skin: { status: "omitted", regions: 0, omittedRegions: 1 },
+      eyes: { status: "applied" }, teeth: { status: "applied" }, facialLighting: { status: "applied" },
+    })
+    expect(again.operations).toEqual(result.operations)
+    expect(await readFile(repeated)).toEqual(await readFile(polished))
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("omite ojos o dientes inciertos sin bloquear las demás operaciones seguras", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-selective-regions-"))
+  try {
+    const source = path.join(directory, "portrait.png")
+    await sharp({ create: { width: 600, height: 500, channels: 3, background: "#a96d58" } }).png().toFile(source)
+    const retoucher = new PortraitRetoucher()
+    const partialEyes = await retoucher.apply(source, path.join(directory, "partial-eyes.tif"), 2, { kind: "partial-eyes" })
+    const noTeeth = await retoucher.apply(source, path.join(directory, "no-teeth.tif"), 2, { kind: "no-teeth" })
+    expect(partialEyes.operations.eyes.status).toBe("omitted")
+    expect(partialEyes.operations.skin.status).toBe("applied")
+    expect(partialEyes.operations.teeth.status).toBe("applied")
+    expect(noTeeth.operations.teeth.status).toBe("omitted")
+    expect(noTeeth.operations.eyes.status).toBe("applied")
+    expect(noTeeth.warnings).toEqual(expect.arrayContaining([expect.stringContaining("dientes con confianza")]))
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test("trata localmente rostros grupales diversos sin modificar geometría ni el fondo", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-portrait-group-"))
@@ -201,7 +308,7 @@ test("mantiene el completado en la vista previa y el JPEG completo aprobado", as
   }
 })
 
-test("expone niveles conservadores y análisis facial en el flujo visible", async ({ browser }) => {
+test("expone el análisis facial automático sin ajustes de operador", async ({ browser }) => {
   const application = await TestApplication.start(browser, "smartstudio-portrait-ui-", { testFeatures: true })
   try {
     await application.page.getByLabel("Nombre del evento").fill("Retrato")
@@ -216,13 +323,12 @@ test("expone niveles conservadores y análisis facial en el flujo visible", asyn
     await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
     await expect(application.page.getByText("1 rostro detectado", { exact: true })).toBeVisible()
     await expect(application.page.getByText("Fondo: sin cambios", { exact: true })).toBeVisible()
-    await expect(application.page.getByText("Suave", { exact: true })).toBeVisible()
-    const slider = application.page.getByLabel("Suavizado de piel")
-    await slider.fill("0")
-    await expect(application.page.getByText("Desactivado", { exact: true })).toBeVisible()
-    await slider.fill("2")
-    await expect(application.page.getByText("Medio", { exact: true })).toBeVisible()
-    await expect(application.page.getByText("Detección local sin identificación", { exact: false })).toBeVisible()
+    await expect(application.page.getByText("Piel: aplicado", { exact: true })).toBeVisible()
+    await expect(application.page.getByText("Ojos: aplicado", { exact: true })).toBeVisible()
+    await expect(application.page.getByText("Dientes: aplicado", { exact: true })).toBeVisible()
+    await expect(application.page.getByText("Luz facial: aplicado", { exact: true })).toBeVisible()
+    await expect(application.page.getByLabel("Suavizado de piel")).toHaveCount(0)
+    await expect(application.page.getByText("Evento pulido automático · detección local sin identificación", { exact: true })).toBeVisible()
   } finally {
     await application.close()
   }

@@ -1,12 +1,14 @@
 # ADR 0002 — darktable y MediaPipe para la edición local
 
-**Estado:** aceptada
+**Estado:** sustituida parcialmente por ADR 0004
 
 ## Decisión
 
 El revelado RAW principal usa `darktable-cli` con el flujo scene-referred predeterminado y exporta un TIFF sRGB intermedio de 16 bits. rawpy/LibRaw permanece como respaldo cuando darktable no está disponible.
 
 La detección de rostros, landmarks, parpadeo y regiones de piel usa modelos oficiales de MediaPipe almacenados localmente. OpenCV queda limitado a transformaciones conservadoras sobre máscaras calculadas por esos modelos y a las capturas sintéticas controladas de las pruebas.
+
+ADR 0004 conserva la elección local de darktable, MediaPipe y OpenCV, pero sustituye la limitación de intensidad conservadora y concreta el pipeline objetivo de Evento pulido.
 
 ## Motivo
 

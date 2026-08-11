@@ -1,12 +1,14 @@
 # ADR 0003 — Completado determinista del fondo del miniestudio
 
-**Estado:** aceptada
+**Estado:** sustituida parcialmente por ADR 0005
 
 ## Decisión
 
-El perfil Natural de evento puede completar un fondo uniforme interrumpido por pared, bordes o soportes visibles. MediaPipe produce la máscara semántica; la aplicación protege la silueta de las personas y reconstruye fuera de ella un plano de color e iluminación calculado desde regiones limpias de la misma fotografía.
+El perfil Evento pulido puede completar un fondo uniforme interrumpido por pared, bordes o soportes visibles. MediaPipe produce la máscara semántica; la aplicación protege la silueta de las personas y reconstruye fuera de ella un plano de color e iluminación calculado desde regiones limpias de la misma fotografía.
 
 La operación se omite cuando la cobertura, uniformidad o separación de la persona no alcanzan umbrales conservadores. No usa relleno generativo, no incorpora otra escena y no funciona como eliminador general de objetos.
+
+ADR 0005 conserva este completado como respaldo, pero sustituye la restricción de usar exclusivamente regiones de la misma fotografía cuando existe una placa limpia validada para el evento.
 
 ## Motivo
 

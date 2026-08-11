@@ -3,13 +3,16 @@ import path from "node:path"
 
 import {
   emptyWorkflowState,
+  emptyRetouchStageMilliseconds,
   isBackdropCompletion,
+  omittedRetouchDecisions,
   type Capture,
   type EditingJob,
   type Event,
   type Series,
   type WorkflowState,
   naturalEventProfile,
+  polishedEventProfile,
 } from "../shared/workflow.js"
 
 type UnknownRecord = Record<string, unknown>
@@ -58,9 +61,9 @@ const upgradeEvent = (event: UnknownRecord): Event => ({
           : [],
       }))
     : [],
-  editingProfile: isRecord(event.editingProfile)
+  editingProfile: isRecord(event.editingProfile) && event.editingProfile.id === "polished-event"
     ? event.editingProfile as Event["editingProfile"]
-    : naturalEventProfile(),
+    : polishedEventProfile(),
 })
 
 const upgradeEditingJobs = (value: unknown): EditingJob[] => {
@@ -79,6 +82,20 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
     const versions: EditingJob["versions"] = Array.isArray(job.versions)
       ? job.versions.filter(isRecord).map((version) => ({
           ...version,
+          previewSha256: typeof version.previewSha256 === "string" ? version.previewSha256 : null,
+          previewMasterSha256: typeof version.previewMasterSha256 === "string" ? version.previewMasterSha256 : null,
+          masterId: typeof version.masterId === "string" ? version.masterId : null,
+          masterRelativePath: typeof version.masterRelativePath === "string" ? version.masterRelativePath : null,
+          masterSha256: typeof version.masterSha256 === "string" ? version.masterSha256 : null,
+          originalSha256: typeof version.originalSha256 === "string" ? version.originalSha256 : null,
+          recipeRelativePath: typeof version.recipeRelativePath === "string" ? version.recipeRelativePath : null,
+          recipeVersion: typeof version.recipeVersion === "number" ? version.recipeVersion : null,
+          recipeSha256: typeof version.recipeSha256 === "string" ? version.recipeSha256 : null,
+          developer: new Set(["controlled", "darktable", "rawpy", "jpeg"]).has(String(version.developer)) ? version.developer : null,
+          developerVersion: typeof version.developerVersion === "string" ? version.developerVersion : null,
+          developerParameters: isRecord(version.developerParameters) ? version.developerParameters as EditingJob["versions"][number]["developerParameters"] : {},
+          developmentWarnings: Array.isArray(version.developmentWarnings) ? version.developmentWarnings.filter((item): item is string => typeof item === "string") : [],
+          iccProfile: typeof version.iccProfile === "string" ? version.iccProfile : null,
           backupStatus: new Set(["pending", "verified", "failed"]).has(String(version.backupStatus)) ? version.backupStatus : "pending",
           backupError: typeof version.backupError === "string" ? version.backupError : null,
         } as EditingJob["versions"][number]))
@@ -86,6 +103,9 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
         ? [{
             id: crypto.randomUUID(), number: 1, createdAt: typeof job.previewReadyAt === "string" ? job.previewReadyAt : new Date(0).toISOString(),
             profile, adjustments, origin: job.origin === "jpeg" ? "jpeg" : "raw", previewRelativePath: legacyPreview,
+            previewSha256: null, previewMasterSha256: null, masterId: null, masterRelativePath: null, masterSha256: null,
+            originalSha256: null, recipeRelativePath: null, recipeVersion: null, recipeSha256: null,
+            developer: null, developerVersion: null, developerParameters: {}, developmentWarnings: [], iccProfile: null,
             approvalStatus: job.status === "approved" ? "approved" : "review", approvedAt: typeof job.approvedAt === "string" ? job.approvedAt : null,
             revokedAt: null, fullRelativePath: null, deliveryStatus: "not-requested", deliveryError: null, width: null, height: null,
             backupStatus: "pending", backupError: null,
@@ -96,7 +116,7 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
     eventId: job.eventId as string,
     sessionId: job.sessionId as string,
     captureId: job.captureId as string,
-    status: new Set(["queued", "processing", "awaiting-jpeg-authorization", "jpeg-rejected", "review", "approved", "failed", "interrupted", "cancelled"]).has(String(job.status))
+    status: new Set(["queued", "processing", "awaiting-jpeg-authorization", "jpeg-rejected", "review", "approved", "rejected", "failed", "interrupted", "cancelled"]).has(String(job.status))
       ? job.status as EditingJob["status"]
       : "failed",
     createdAt: typeof job.createdAt === "string" ? job.createdAt : new Date(0).toISOString(),
@@ -126,16 +146,35 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
     backdropCompletion: isBackdropCompletion(job.backdropCompletion) ? job.backdropCompletion : "unchanged",
     eyeEnhancementEnabled: job.eyeEnhancementEnabled !== false,
     teethWhiteningEnabled: job.teethWhiteningEnabled !== false,
-    metrics: isRecord(job.metrics) ? job.metrics as EditingJob["metrics"] : { processingRoute: "cpu", previewMilliseconds: null, deliveryMilliseconds: null, failures: 0, retries: 0 },
+    processDiagnostics: Array.isArray(job.processDiagnostics)
+      ? job.processDiagnostics.filter(isRecord).filter((diagnostic) =>
+          typeof diagnostic.stage === "string" &&
+          typeof diagnostic.durationMilliseconds === "number" &&
+          (typeof diagnostic.code === "number" || diagnostic.code === null) &&
+          new Set(["completed", "failed", "timeout", "cancelled", "spawn-error"]).has(String(diagnostic.termination)),
+        ) as EditingJob["processDiagnostics"]
+      : [],
+    retouchDecisions: isRecord(job.retouchDecisions) ? job.retouchDecisions as EditingJob["retouchDecisions"] : omittedRetouchDecisions(),
+    metrics: {
+      processingRoute: isRecord(job.metrics) && job.metrics.processingRoute === "gpu" ? "gpu" : "cpu",
+      previewMilliseconds: isRecord(job.metrics) && typeof job.metrics.previewMilliseconds === "number" ? job.metrics.previewMilliseconds : null,
+      deliveryMilliseconds: isRecord(job.metrics) && typeof job.metrics.deliveryMilliseconds === "number" ? job.metrics.deliveryMilliseconds : null,
+      failures: isRecord(job.metrics) && typeof job.metrics.failures === "number" ? job.metrics.failures : 0,
+      retries: isRecord(job.metrics) && typeof job.metrics.retries === "number" ? job.metrics.retries : 0,
+      stages: isRecord(job.metrics) && isRecord(job.metrics.stages)
+        ? { ...emptyRetouchStageMilliseconds(), development: 0, export: 0, ...job.metrics.stages }
+        : { ...emptyRetouchStageMilliseconds(), development: 0, export: 0 },
+    },
     accelerationWarning: typeof job.accelerationWarning === "string" ? job.accelerationWarning : "Ruta CPU activa; la edición sigue disponible con menor rendimiento.",
+    accelerationEvidence: job.accelerationEvidence === "effective-opencl" || job.accelerationEvidence === "cpu" ? job.accelerationEvidence : "inconclusive",
   })})
 }
 
 const migrateState = (persisted: unknown): WorkflowState => {
   if (!isRecord(persisted)) return emptyWorkflowState()
-  if ((persisted.version === 3 || persisted.version === 4 || persisted.version === 5 || persisted.version === 6 || persisted.version === 7 || persisted.version === 8 || persisted.version === 9 || persisted.version === 10) && Array.isArray(persisted.events)) {
+  if ((persisted.version === 3 || persisted.version === 4 || persisted.version === 5 || persisted.version === 6 || persisted.version === 7 || persisted.version === 8 || persisted.version === 9 || persisted.version === 10 || persisted.version === 11 || persisted.version === 12 || persisted.version === 13) && Array.isArray(persisted.events)) {
     return {
-      version: 10,
+      version: 13,
       events: persisted.events.filter(isRecord).map(upgradeEvent),
       editingJobs: upgradeEditingJobs(persisted.editingJobs),
       activeEventId: typeof persisted.activeEventId === "string" ? persisted.activeEventId : null,
@@ -144,7 +183,7 @@ const migrateState = (persisted: unknown): WorkflowState => {
   }
   if (persisted.version === 2 && Array.isArray(persisted.events)) {
     return {
-      version: 10,
+      version: 13,
       events: persisted.events.filter(isRecord).map(upgradeEvent),
       editingJobs: [],
       activeEventId: typeof persisted.activeEventId === "string" ? persisted.activeEventId : null,
@@ -155,7 +194,7 @@ const migrateState = (persisted: unknown): WorkflowState => {
     const legacyEvent = persisted.event
     const legacySession = isRecord(legacyEvent.session) ? legacyEvent.session : null
     return {
-      version: 10,
+      version: 13,
       activeEventId: String(legacyEvent.id),
       savedAt: typeof persisted.savedAt === "string" ? persisted.savedAt : null,
       editingJobs: [],
@@ -197,7 +236,7 @@ export class WorkflowStore {
       const contents = await readFile(this.statePath, "utf8")
       const persisted = JSON.parse(contents) as unknown
       this.state = migrateState(persisted)
-      if (!isRecord(persisted) || persisted.version !== 10) await this.persist(this.state)
+      if (!isRecord(persisted) || persisted.version !== 12) await this.persist(this.state)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
     }

@@ -14,7 +14,9 @@
     "setup:vision": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-vision-models.ps1",
     "typecheck": "tsc --noEmit",
     "check": "pnpm typecheck && pnpm build",
-    "test:e2e": "pnpm build && playwright test"
+    "test:e2e": "pnpm build && playwright test",
+    "benchmark:report": "tsx scripts/write-performance-report.ts",
+    "calibrate:event-polished": "tsx scripts/validate-event-polished-calibration.ts"
   },
   "dependencies": {
     "@fastify/multipart": "10.1.0",

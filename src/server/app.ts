@@ -12,7 +12,9 @@ import {
   captureById,
   sessionCaptures,
   sessionIsReadyForEditing,
-  naturalEventProfile,
+  emptyRetouchStageMilliseconds,
+  omittedRetouchDecisions,
+  polishedEventProfile,
   type Capture,
   type EditingJob,
   type EditingVersion,
@@ -27,6 +29,7 @@ import { OperationsService } from "./operations-service.js"
 import { SonyFolderReceiver } from "./sony-folder-receiver.js"
 import { WorkflowStore } from "./workflow-store.js"
 import { sha256File } from "./file-hash.js"
+import { performanceReport } from "./performance-report.js"
 
 export type ServerOptions = {
   dataDirectory: string
@@ -34,6 +37,7 @@ export type ServerOptions = {
   logger?: boolean
   testFeatures?: boolean
   editingProcessingDelayMilliseconds?: number
+  editingDeliveryDelayMilliseconds?: number
   controlledPortraitFixture?: PortraitFixture
   simulatedCaptureProfile?: SimulationProfile
 }
@@ -68,7 +72,7 @@ const createEditingJob = (event: Event, sessionId: string, capture: Capture, id 
   profile: structuredClone(event.editingProfile),
   adjustments: structuredClone(event.editingProfile.defaults),
   uncontrolledConditionsWarning: capture.quality?.warnings.some((warning) => warning === "exposure" || warning === "poor-framing")
-    ? "La captura se aleja de las condiciones controladas; se aplicó una corrección conservadora."
+    ? "La captura se aleja de las condiciones controladas; Evento pulido se aplicó automáticamente."
     : null,
   lensCorrectionApplied: false,
   versions: [],
@@ -79,12 +83,20 @@ const createEditingJob = (event: Event, sessionId: string, capture: Capture, id 
   backdropCompletion: "unchanged",
   eyeEnhancementEnabled: true,
   teethWhiteningEnabled: true,
-  metrics: { processingRoute: "cpu", previewMilliseconds: null, deliveryMilliseconds: null, failures: 0, retries: 0 },
+  processDiagnostics: [],
+  retouchDecisions: omittedRetouchDecisions(),
+  metrics: { processingRoute: "cpu", previewMilliseconds: null, deliveryMilliseconds: null, failures: 0, retries: 0, stages: { ...emptyRetouchStageMilliseconds(), development: 0, export: 0 } },
   accelerationWarning: "La ruta de aceleración se confirmará al procesar la fotografía.",
+  accelerationEvidence: "inconclusive",
 })
 
 const backupCoverage = (version: EditingVersion, paths: Set<string>): { included: boolean; attempted: boolean } => {
-  const requiredPaths = [version.previewRelativePath, ...(version.fullRelativePath ? [version.fullRelativePath] : [])]
+  const requiredPaths = [
+    version.previewRelativePath,
+    ...(version.masterRelativePath ? [version.masterRelativePath] : []),
+    ...(version.recipeRelativePath ? [version.recipeRelativePath] : []),
+    ...(version.fullRelativePath ? [version.fullRelativePath] : []),
+  ]
   return {
     included: requiredPaths.every((relativePath) => paths.has(relativePath)),
     attempted: requiredPaths.some((relativePath) => paths.has(relativePath)),
@@ -127,6 +139,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     store,
     options.dataDirectory,
     options.editingProcessingDelayMilliseconds ?? (options.testFeatures ? 1_000 : 0),
+    options.editingDeliveryDelayMilliseconds ?? 0,
     () => operations.assertCanFinishEditing(),
     options.testFeatures ? options.controlledPortraitFixture : undefined,
   )
@@ -139,7 +152,11 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     const capture = session?.series.flatMap((series) => series.captures).find((item) => item.id === captureId)
     if (!event || !session || !capture) throw new Error("La fotografía no existe en esta sesión fotográfica.")
     if (event.status !== "active") throw new Error("El evento está cerrado y no admite nuevos trabajos de edición.")
-    const duplicate = snapshot.editingJobs.find((job) => job.captureId === captureId && job.profile.version === event.editingProfile.version)
+    const duplicate = snapshot.editingJobs.find((job) =>
+      job.captureId === captureId &&
+      job.profile.id === event.editingProfile.id &&
+      job.profile.version === event.editingProfile.version,
+    )
     if (duplicate) return snapshot
     const job = createEditingJob(event, sessionId, capture)
     const result = await store.mutate((state) => {
@@ -176,6 +193,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
 
   app.get("/api/state", async () => store.snapshot())
   app.get("/api/operations", async () => operations.snapshot())
+  app.get("/api/editing/performance", async () => performanceReport(store.snapshot().editingJobs))
 
   app.post<{ Body: { directory?: unknown } }>("/api/operations/backup", async (request) => {
     return operations.configureBackup(requireText(request.body?.directory, "La ruta del SSD"))
@@ -273,7 +291,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
         closedAt: null,
         status: "active",
         sessions: [],
-        editingProfile: naturalEventProfile(),
+        editingProfile: polishedEventProfile(),
       })
       state.activeEventId = id
     })
@@ -376,6 +394,10 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     return editing.approve(request.params.id, request.body?.versionId)
   })
 
+  app.post<{ Params: { id: string }; Body?: { versionId?: string } }>("/api/editing/:id/reject", async (request) => {
+    return editing.reject(request.params.id, request.body?.versionId)
+  })
+
   app.post<{ Params: { id: string } }>("/api/editing/:id/cancel", async (request) => {
     return editing.cancel(request.params.id)
   })
@@ -397,26 +419,22 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
   })
 
   app.post<{ Params: { id: string }; Body: Record<string, unknown> }>("/api/editing/:id/adjustments", async (request) => {
-    await operations.assertCanStartEditing()
-    openEventForEditingJob(request.params.id)
-    return editing.updateAdjustments(request.params.id, request.body)
+    void request
+    throw new Error("Evento pulido es automático y no admite ajustes del operador.")
   })
 
   app.post<{ Params: { id: string } }>("/api/editing/:id/reset", async (request) => {
-    await operations.assertCanStartEditing()
-    openEventForEditingJob(request.params.id)
-    return editing.resetAdjustments(request.params.id)
+    void request
+    throw new Error("Evento pulido es automático y no admite restablecimiento de parámetros.")
   })
 
   app.post<{ Params: { id: string } }>("/api/editing/:id/reprocess", async (request) => {
-    await operations.assertCanStartEditing()
-    openEventForEditingJob(request.params.id)
-    return editing.reprocess(request.params.id)
+    void request
+    throw new Error("Evento pulido no admite reprocesamiento editorial; solo se reintentan errores técnicos.")
   })
   app.post<{ Params: { id: string } }>("/api/editing/:id/reprocess-current-profile", async (request) => {
-    await operations.assertCanStartEditing()
-    const event = openEventForEditingJob(request.params.id)
-    return editing.reprocessWithProfile(request.params.id, event.editingProfile)
+    void request
+    throw new Error("Evento pulido es el único perfil y no admite cambio de perfil.")
   })
   app.post<{ Params: { id: string } }>("/api/editing/:id/revoke", async (request) => editing.revokeApproval(request.params.id))
   app.post<{ Params: { id: string } }>("/api/editing/:id/retry-delivery", async (request) => editing.retryDelivery(request.params.id))
@@ -450,12 +468,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
   })
 
   app.post("/api/events/profile/advance", async () => {
-    const event = activeEvent(store.snapshot())
-    if (!event) throw new Error("No existe un evento activo.")
-    return store.mutate((state) => {
-      const current = activeEvent(state)!
-      current.editingProfile = naturalEventProfile(current.editingProfile.version + 1)
-    })
+    throw new Error("Evento pulido es el único perfil disponible.")
   })
 
   app.post("/api/series", async () => {

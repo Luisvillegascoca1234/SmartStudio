@@ -21,24 +21,29 @@ async function prepare(application: TestApplication, captures = 1) {
   return session.series[0].captures
 }
 
-test("conserva versiones, aprobación, revocación, alternativa y cambio de principal", async ({ browser }) => {
+test("conserva aprobación, revocación, alternativa y cambio de principal", async ({ browser }) => {
   const application = await TestApplication.start(browser, "smartstudio-versions-", { testFeatures: true })
   try {
     const captures = await prepare(application, 2)
     let state = await application.state()
     const firstJob = state.editingJobs[0]
     const card = application.page.getByTestId(`editing-job-${captures[0].baseName}`)
-    await card.getByRole("button", { name: "Reprocesar" }).click()
-    await expect.poll(async () => (await application.state()).editingJobs[0].versions.length).toBe(2)
-    await card.getByRole("button", { name: "Aprobar versión 2" }).click()
+    await card.getByRole("button", { name: "Aprobar edición" }).click()
     await expect(card.getByText("Aprobada vigente", { exact: true })).toBeVisible()
-    await card.getByRole("button", { name: "Reprocesar" }).click()
-    await expect.poll(async () => (await application.state()).editingJobs[0].versions.length).toBe(3)
-    state = await application.state()
-    expect(state.editingJobs[0].approvedVersionId).toBe(state.editingJobs[0].versions[1].id)
+    await expect.poll(async () => (await application.state()).editingJobs[0].versions[0].deliveryStatus).toBe("ready")
+    const approvedDeliveryPath = (await application.state()).editingJobs[0].versions[0].fullRelativePath!
     await card.getByRole("button", { name: "Revocar aprobación" }).click()
-    expect((await application.state()).editingJobs[0].approvedVersionId).toBeNull()
-    await card.getByRole("button", { name: "Aprobar versión 3" }).click()
+    const revokedJob = (await application.state()).editingJobs[0]
+    expect(revokedJob.approvedVersionId).toBeNull()
+    expect(revokedJob.versions[0].deliveryStatus).toBe("ready")
+    expect(revokedJob.versions[0].fullRelativePath).toBe(approvedDeliveryPath)
+    expect((await application.readDataFile(approvedDeliveryPath)).length).toBeGreaterThan(0)
+    await card.getByRole("button", { name: "Aprobar versión 1" }).click()
+    await card.getByRole("button", { name: "Revocar aprobación" }).click()
+    await card.getByRole("button", { name: "Rechazar y conservar original" }).click()
+    await expect(card.getByText("Edición rechazada", { exact: true }).first()).toBeVisible()
+    await expect.poll(async () => (await application.state()).editingJobs[0].versions[0].deliveryStatus).toBe("not-requested")
+    expect((await application.state()).editingJobs[0].versions[0].fullRelativePath).toBeNull()
 
     await card.getByRole("button", { name: "Procesar alternativa" }).click()
     await expect.poll(async () => (await application.state()).editingJobs.length).toBe(2)
@@ -53,9 +58,29 @@ test("conserva versiones, aprobación, revocación, alternativa y cambio de prin
     await expect(application.page.getByText("Finalizada · Edición aprobada", { exact: false })).toBeVisible()
     await application.reopen()
     state = await application.state()
-    expect(state.editingJobs[0].versions).toHaveLength(3)
+    expect(state.editingJobs[0].versions).toHaveLength(1)
     expect(state.editingJobs).toHaveLength(2)
-    expect(firstJob.profile.name).toBe("Natural de evento")
+    expect(firstJob.profile.name).toBe("Evento pulido")
+  } finally {
+    await application.close()
+  }
+})
+
+test("revocar durante la generación cancela una entrega que todavía no existe", async ({ browser }) => {
+  const application = await TestApplication.start(browser, "smartstudio-revoke-generating-", { testFeatures: true, editingDeliveryDelayMilliseconds: 3_000 })
+  try {
+    const [capture] = await prepare(application)
+    const card = application.page.getByTestId(`editing-job-${capture.baseName}`)
+    await card.getByRole("button", { name: "Aprobar edición" }).click()
+    await expect.poll(async () => (await application.state()).editingJobs[0].versions[0].deliveryStatus).toBe("generating")
+    await card.getByRole("button", { name: "Revocar aprobación" }).click()
+    await expect.poll(async () => (await application.state()).editingJobs[0].versions[0].deliveryStatus).toBe("not-requested")
+    await application.page.waitForTimeout(3_000)
+    const revoked = (await application.state()).editingJobs[0]
+    expect(revoked.status).toBe("review")
+    expect(revoked.approvedVersionId).toBeNull()
+    expect(revoked.versions[0].fullRelativePath).toBeNull()
+    expect(revoked.versions[0].deliveryStatus).toBe("not-requested")
   } finally {
     await application.close()
   }

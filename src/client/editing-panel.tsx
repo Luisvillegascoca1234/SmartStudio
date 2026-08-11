@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Check, CircleAlert, LoaderCircle, WandSparkles } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { BACKDROP_COMPLETION_LABELS, type EditingJob, type Event } from "../shared/workflow.js"
-import { editingStatusPresentation } from "./editing-presentation.js"
+import { editingStatusPresentation, historicalAdjustmentPresentation } from "./editing-presentation.js"
 
 const elapsedLabel = (job: EditingJob): string => {
   const start = new Date(job.startedAt ?? job.createdAt).getTime()
@@ -54,49 +54,6 @@ function ComparisonViewer({ captureId, baseName, job }: { captureId: string; bas
   )
 }
 
-function AdjustmentControls({ job, busy, transition }: {
-  job: EditingJob
-  busy: boolean
-  transition: (path: string, body?: unknown) => void
-}) {
-  const [values, setValues] = useState(job.adjustments)
-  useEffect(() => setValues(job.adjustments), [job.adjustments])
-  const controls = [
-    ["exposure", "Exposición", -1, 1, 0.1],
-    ["temperature", "Temperatura", -1, 1, 0.1],
-    ["colorIntensity", "Intensidad de color", -1, 1, 0.1],
-    ["skinSmoothing", "Suavizado de piel", 0, 2, 1],
-  ] as const
-  return (
-    <div className="grid gap-3 rounded-lg border border-border bg-background/35 p-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        {controls.map(([key, label, min, max, step]) => (
-          <label key={key} className="grid gap-1 text-xs font-medium">
-            <span className="flex justify-between"><span>{label}</span><span>{key === "skinSmoothing" ? ["Desactivado", "Suave", "Medio"][values[key]] : values[key]}</span></span>
-            <Input
-              aria-label={label}
-              type="range"
-              min={min}
-              max={max}
-              step={step}
-              value={values[key]}
-              onChange={(event) => setValues({ ...values, [key]: Number(event.target.value) })}
-            />
-          </label>
-        ))}
-      </div>
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="outline" disabled={busy} onClick={() => transition(`/api/editing/${job.id}/reset`)}>
-          Restablecer edición automática
-        </Button>
-        <Button disabled={busy} onClick={() => transition(`/api/editing/${job.id}/adjustments`, values)}>
-          Aplicar ajustes
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 export function EditingPanel({
   event,
   jobs,
@@ -117,10 +74,7 @@ export function EditingPanel({
           <p className="text-xs font-semibold tracking-[0.18em] text-primary">EDICIÓN LOCAL</p>
           <h3 id="editing-heading" className="mt-1 text-lg font-semibold">Edición automática</h3>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline">{event.editingProfile.name} · v{event.editingProfile.version}</Badge>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => transition("/api/events/profile/advance")}>Nueva versión del perfil</Button>
-        </div>
+        <Badge variant="outline">{event.editingProfile.name} · v{event.editingProfile.version} · automático</Badge>
       </div>
 
       <div className="grid gap-4">
@@ -131,6 +85,7 @@ export function EditingPanel({
           const previewAvailable = Boolean(job.previewRelativePath)
           const currentVersion = job.versions.find((version) => version.id === job.currentVersionId)
           const approvedVersion = job.versions.find((version) => version.id === job.approvedVersionId)
+          const lastProcessDiagnostic = job.processDiagnostics.at(-1)
           const alternatives = session.series.flatMap((series) => series.captures).filter((item) => item.id !== capture.id && item.selected)
           const previewDelayed = job.status === "processing" && Boolean(job.startedAt) && Date.now() - new Date(job.startedAt!).getTime() > 30_000
 
@@ -157,6 +112,9 @@ export function EditingPanel({
                     <CircleAlert />
                     <AlertTitle>No se pudo editar la fotografía</AlertTitle>
                     <AlertDescription>{job.error}</AlertDescription>
+                    {lastProcessDiagnostic && (
+                      <p className="mt-2 text-xs">Etapa: {lastProcessDiagnostic.stage} · {lastProcessDiagnostic.durationMilliseconds} ms · salida {lastProcessDiagnostic.code ?? "—"} · causa {lastProcessDiagnostic.termination}</p>
+                    )}
                   </Alert>
                 </CardContent>
               )}
@@ -199,41 +157,57 @@ export function EditingPanel({
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <Badge variant="outline">{job.faceCount} rostro{job.faceCount === 1 ? "" : "s"} detectado{job.faceCount === 1 ? "" : "s"}</Badge>
                     <Badge variant="outline">Fondo: {BACKDROP_COMPLETION_LABELS[job.backdropCompletion]}</Badge>
-                    <span>Detección local sin identificación · ojos y dientes: mejora suave</span>
+                    <span>Evento pulido automático · detección local sin identificación</span>
                     <span>Ruta {job.metrics.processingRoute.toUpperCase()} · vista previa {job.metrics.previewMilliseconds ?? "—"} ms · JPEG completo {job.metrics.deliveryMilliseconds ?? "—"} ms · fallos {job.metrics.failures} · reintentos {job.metrics.retries}</span>
+                    {lastProcessDiagnostic && <span>Última etapa local: {lastProcessDiagnostic.stage} · {lastProcessDiagnostic.durationMilliseconds} ms · {lastProcessDiagnostic.termination}</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs" aria-label="Decisiones automáticas de retoque">
+                    {([
+                      ["skin", "Piel"], ["eyes", "Ojos"], ["teeth", "Dientes"],
+                      ["facialLighting", "Luz facial"], ["backdrop", "Fondo"],
+                    ] as const).map(([operation, label]) => {
+                      const result = job.retouchDecisions[operation]
+                      return <Badge key={operation} variant={result.status === "applied" ? "secondary" : "outline"} title={result.reason ?? undefined}>{label}: {result.status === "applied" ? "aplicado" : "omitido"}</Badge>
+                    })}
                   </div>
                   {job.accelerationWarning && <p className="text-xs text-amber-300">{job.accelerationWarning}</p>}
                   {job.portraitWarnings.map((warning) => (
-                    <Alert key={warning} className="border-amber-500/35 bg-amber-500/10"><CircleAlert /><AlertTitle>Corrección conservadora omitida parcialmente</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>
+                    <Alert key={warning} className="border-amber-500/35 bg-amber-500/10"><CircleAlert /><AlertTitle>Operación automática omitida parcialmente</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>
                   ))}
                   <ComparisonViewer captureId={capture.id} baseName={capture.baseName} job={job} />
-                  <AdjustmentControls job={job} busy={busy} transition={transition} />
+                  {job.status === "rejected" && (
+                    <Alert className="border-amber-500/35 bg-amber-500/10"><CircleAlert /><AlertTitle>Edición rechazada</AlertTitle><AlertDescription>El resultado no está listo para entrega; se conserva el original sin modificaciones.</AlertDescription></Alert>
+                  )}
                   <div className="grid gap-2 rounded-lg border border-border p-3">
                     <p className="text-xs font-semibold">Versiones conservadas</p>
-                    {job.versions.toReversed().map((version) => (
+                    {job.versions.toReversed().map((version) => {
+                      const historicalAdjustments = historicalAdjustmentPresentation(version.profile, version.adjustments)
+                      return (
                       <div key={version.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <span>Versión {version.number} · {version.profile.name} v{version.profile.version} · {version.origin === "jpeg" ? "JPEG" : "RAW"}</span>
+                        <div className="grid gap-1">
+                          <span>Versión {version.number} · {version.profile.name} v{version.profile.version} · {version.origin === "jpeg" ? "JPEG" : "RAW"}</span>
+                          {version.developer && <span className="text-muted-foreground">Revelador: {version.developer} · {version.developerVersion ?? "versión desconocida"}</span>}
+                          {version.developmentWarnings.map((warning) => <span key={warning} className="text-amber-300">{warning}</span>)}
+                          {historicalAdjustments && <span className="text-muted-foreground">{historicalAdjustments}</span>}
+                        </div>
                         <div className="flex items-center gap-2">
                           <Badge variant={version.backupStatus === "verified" ? "secondary" : version.backupStatus === "failed" ? "destructive" : "outline"}>{version.backupStatus === "verified" ? "Respaldo verificado" : version.backupStatus === "failed" ? "Respaldo fallido" : "Respaldo pendiente"}</Badge>
-                          <Badge variant={version.approvalStatus === "approved" ? "default" : "outline"}>{version.approvalStatus === "approved" ? "Aprobada vigente" : version.approvalStatus === "revoked" ? "Revocada" : version.approvalStatus === "superseded" ? "Reemplazada" : "En revisión"}</Badge>
-                          {version.approvalStatus !== "approved" && (
+                          <Badge variant={version.approvalStatus === "approved" ? "default" : "outline"}>{version.approvalStatus === "approved" ? "Aprobada vigente" : version.approvalStatus === "rejected" ? "Rechazada" : version.approvalStatus === "revoked" ? "Revocada" : version.approvalStatus === "superseded" ? "Reemplazada" : "En revisión"}</Badge>
+                          {version.approvalStatus !== "approved" && version.approvalStatus !== "rejected" && (
                             <Button size="xs" variant="secondary" disabled={busy} onClick={() => transition(`/api/editing/${job.id}/approve`, { versionId: version.id })}>Aprobar versión {version.number}</Button>
                           )}
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs text-muted-foreground">El resultado es derivado; RAW y JPEG originales permanecen intactos. Corrección de lente: {job.lensCorrectionApplied ? "aplicada" : "sin datos utilizables"}.</p>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button variant="outline" disabled={busy} onClick={() => transition(`/api/editing/${job.id}/reprocess`)}>Reprocesar</Button>
-                      {event.editingProfile.version !== job.profile.version && (
-                        <Button variant="outline" disabled={busy} onClick={() => transition(`/api/editing/${job.id}/reprocess-current-profile`)}>
-                          Reprocesar con perfil v{event.editingProfile.version}
-                        </Button>
-                      )}
                       {job.status === "review" && currentVersion && (
-                        <Button disabled={busy} onClick={() => transition(`/api/editing/${job.id}/approve`, { versionId: currentVersion.id })}>Aprobar edición</Button>
+                        <>
+                          <Button variant="outline" disabled={busy} onClick={() => transition(`/api/editing/${job.id}/reject`, { versionId: currentVersion.id })}>Rechazar y conservar original</Button>
+                          <Button disabled={busy} onClick={() => transition(`/api/editing/${job.id}/approve`, { versionId: currentVersion.id })}>Aprobar edición</Button>
+                        </>
                       )}
                       {approvedVersion && (
                         <Button variant="outline" disabled={busy} onClick={() => transition(`/api/editing/${job.id}/revoke`)}>Revocar aprobación</Button>
@@ -270,7 +244,7 @@ export function EditingPanel({
                       Cancelar edición
                     </Button>
                   )}
-                  {(job.status === "failed" || job.status === "interrupted" || job.status === "cancelled") && (
+                  {(job.status === "failed" || job.status === "interrupted") && (
                     <Button disabled={busy} onClick={() => transition(`/api/editing/${job.id}/retry`)}>
                       Reintentar edición
                     </Button>

@@ -24,6 +24,8 @@ import {
   activeEvent,
   activeSeries,
   activeSession,
+  editingJobHasEditorialDecision,
+  editingJobIsTerminal,
   editingJobsForEvent,
   sessionIsReadyForEditing,
   type WorkflowState,
@@ -84,7 +86,7 @@ export function App() {
     [currentEvent, state],
   )
   const editingComplete = useMemo(
-    () => eventEditingJobs.some((job) => job.status === "approved"),
+    () => eventEditingJobs.some((job) => editingJobHasEditorialDecision(job.status)),
     [eventEditingJobs],
   )
   const currentStep = useMemo(() => {
@@ -94,7 +96,7 @@ export function App() {
       if (!selectionReady) return "selection"
       return "editing"
     }
-    if (eventEditingJobs.some((job) => job.status !== "approved" && job.status !== "cancelled")) return "editing"
+    if (eventEditingJobs.some((job) => !editingJobIsTerminal(job.status))) return "editing"
     return "session"
   }, [currentEvent, currentSession, eventEditingJobs, selectionReady, series])
 

@@ -80,18 +80,32 @@ export type EditingAdjustments = {
   skinSmoothing: number
 }
 
-export type EditingProfile = {
-  id: "natural-event"
-  name: "Natural de evento"
-  version: number
-  defaults: EditingAdjustments
-}
+export type EditingProfile =
+  | {
+      id: "natural-event"
+      name: "Natural de evento"
+      version: number
+      defaults: EditingAdjustments
+    }
+  | {
+      id: "polished-event"
+      name: "Evento pulido"
+      version: number
+      defaults: EditingAdjustments
+    }
 
 export const naturalEventProfile = (version = 1): EditingProfile => ({
   id: "natural-event",
   name: "Natural de evento",
   version,
   defaults: { exposure: 0, temperature: 0, colorIntensity: 0, skinSmoothing: 1 },
+})
+
+export const polishedEventProfile = (version = 1): EditingProfile => ({
+  id: "polished-event",
+  name: "Evento pulido",
+  version,
+  defaults: { exposure: 0, temperature: 0, colorIntensity: 0, skinSmoothing: 2 },
 })
 
 export type EditingJobStatus =
@@ -101,9 +115,47 @@ export type EditingJobStatus =
   | "jpeg-rejected"
   | "review"
   | "approved"
+  | "rejected"
   | "failed"
   | "interrupted"
   | "cancelled"
+
+export const editingJobHasEditorialDecision = (status: EditingJobStatus): boolean => status === "approved" || status === "rejected"
+
+export const editingJobIsTerminal = (status: EditingJobStatus): boolean => editingJobHasEditorialDecision(status) || status === "cancelled"
+
+export type ProcessDiagnostic = {
+  stage: string
+  durationMilliseconds: number
+  code: number | null
+  termination: "completed" | "failed" | "timeout" | "cancelled" | "spawn-error"
+  outputTruncated: boolean
+}
+
+export type RetouchOperation = "skin" | "eyes" | "teeth" | "facialLighting" | "backdrop"
+export type RetouchOperationDecision = {
+  status: "applied" | "omitted"
+  reason: string | null
+  regions: number
+  omittedRegions: number
+}
+export type RetouchStageMilliseconds = {
+  analysis: number
+  skin: number
+  eyesTeeth: number
+  facialLighting: number
+  backdrop: number
+}
+
+export const omittedRetouchDecisions = (): Record<RetouchOperation, RetouchOperationDecision> => ({
+  skin: { status: "omitted", reason: "Todavía no se analizó la piel.", regions: 0, omittedRegions: 0 },
+  eyes: { status: "omitted", reason: "Todavía no se analizaron los ojos.", regions: 0, omittedRegions: 0 },
+  teeth: { status: "omitted", reason: "Todavía no se analizaron los dientes.", regions: 0, omittedRegions: 0 },
+  facialLighting: { status: "omitted", reason: "Todavía no se analizó la luz facial.", regions: 0, omittedRegions: 0 },
+  backdrop: { status: "omitted", reason: "Todavía no se analizó el fondo.", regions: 0, omittedRegions: 0 },
+})
+
+export const emptyRetouchStageMilliseconds = (): RetouchStageMilliseconds => ({ analysis: 0, skin: 0, eyesTeeth: 0, facialLighting: 0, backdrop: 0 })
 
 export type EditingJob = {
   id: string
@@ -134,14 +186,18 @@ export type EditingJob = {
   backdropCompletion: BackdropCompletion
   eyeEnhancementEnabled: boolean
   teethWhiteningEnabled: boolean
+  processDiagnostics: ProcessDiagnostic[]
+  retouchDecisions: Record<RetouchOperation, RetouchOperationDecision>
   metrics: {
     processingRoute: "cpu" | "gpu"
     previewMilliseconds: number | null
     deliveryMilliseconds: number | null
     failures: number
     retries: number
+    stages: RetouchStageMilliseconds & { development: number; export: number }
   }
   accelerationWarning: string | null
+  accelerationEvidence: "effective-opencl" | "cpu" | "inconclusive"
 }
 
 export type EditingVersion = {
@@ -152,7 +208,21 @@ export type EditingVersion = {
   adjustments: EditingAdjustments
   origin: "raw" | "jpeg"
   previewRelativePath: string
-  approvalStatus: "review" | "approved" | "revoked" | "superseded"
+  previewSha256: string | null
+  previewMasterSha256: string | null
+  masterId: string | null
+  masterRelativePath: string | null
+  masterSha256: string | null
+  originalSha256: string | null
+  recipeRelativePath: string | null
+  recipeVersion: number | null
+  recipeSha256: string | null
+  developer: "controlled" | "darktable" | "rawpy" | "jpeg" | null
+  developerVersion: string | null
+  developerParameters: Record<string, string | number | boolean>
+  developmentWarnings: string[]
+  iccProfile: string | null
+  approvalStatus: "review" | "approved" | "rejected" | "revoked" | "superseded"
   approvedAt: string | null
   revokedAt: string | null
   fullRelativePath: string | null
@@ -165,7 +235,7 @@ export type EditingVersion = {
 }
 
 export type WorkflowState = {
-  version: 10
+  version: 13
   events: Event[]
   editingJobs: EditingJob[]
   activeEventId: string | null
@@ -173,7 +243,7 @@ export type WorkflowState = {
 }
 
 export const emptyWorkflowState = (): WorkflowState => ({
-  version: 10,
+  version: 13,
   events: [],
   editingJobs: [],
   activeEventId: null,

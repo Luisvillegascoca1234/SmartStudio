@@ -116,7 +116,7 @@ const analyzeFaces = async (jpegPath: string, options: AssessmentOptions): Promi
     path.resolve("scripts", "analyze-face.py"),
     jpegPath,
     path.join(modelDirectory, "face_landmarker.task"),
-  ]).catch(() => null)
+  ], { stage: "face-quality-analysis", timeoutMilliseconds: 15_000 })
   if (!result || result.code !== 0) return { available: false, faces: [] }
   try {
     return JSON.parse(result.stdout) as FaceAnalysis
