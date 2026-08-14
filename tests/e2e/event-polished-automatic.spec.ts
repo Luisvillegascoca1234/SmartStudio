@@ -35,7 +35,7 @@ test("aplica únicamente Evento pulido automático y permite rechazar conservand
     await begin(application)
     const { baseName, rawPath, jpegPath } = await completeSimulation(application)
     const card = application.page.getByTestId(`editing-job-${baseName}`)
-    await expect(card.getByText("Lista para revisar", { exact: true })).toBeVisible()
+    await expect(card.getByText("Lista para revisar", { exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(card.getByText("Perfil: Evento pulido v1", { exact: true })).toBeVisible()
     await expect(application.page.getByText("Evento pulido · v1 · automático", { exact: true })).toBeVisible()
 
@@ -125,6 +125,9 @@ test("un reintento técnico conserva la receta automática fijada", async ({ bro
     const recovered = (await application.state()).editingJobs[0]
     expect(recovered.profile).toEqual(failed.profile)
     expect(recovered.adjustments).toEqual(failed.adjustments)
+    expect(recovered.matteConfiguration).toEqual(failed.matteConfiguration)
+    expect(recovered.cleanPlateId).toBe(failed.cleanPlateId)
+    expect(recovered.cleanPlateSha256).toBe(failed.cleanPlateSha256)
     expect(recovered.attempts).toBe(2)
     expect(recovered.versions).toHaveLength(1)
   } finally {
@@ -192,7 +195,7 @@ test("migra eventos a Evento pulido sin reinterpretar trabajos Natural históric
     const store = new WorkflowStore(dataDirectory)
     await store.initialize()
     const migrated = store.snapshot()
-    expect(migrated.version).toBe(13)
+    expect(migrated.version).toBe(15)
     expect(migrated.events[0].editingProfile.id).toBe("polished-event")
     expect(migrated.events[0].editingProfile.name).toBe("Evento pulido")
     expect(migrated.editingJobs[0].profile).toEqual(naturalProfile)
@@ -200,7 +203,7 @@ test("migra eventos a Evento pulido sin reinterpretar trabajos Natural históric
     expect(migrated.editingJobs[0].versions[0].profile).toEqual(naturalProfile)
     expect(migrated.editingJobs[0].versions[0].adjustments).toEqual(historicalAdjustments)
     expect(historicalAdjustmentPresentation(migrated.editingJobs[0].versions[0].profile, migrated.editingJobs[0].versions[0].adjustments)).toBe("Parámetros históricos: exposición 0.4 · temperatura -0.2 · color 0.3 · piel 2")
-    expect(JSON.parse(await readFile(statePath, "utf8")).version).toBe(13)
+    expect(JSON.parse(await readFile(statePath, "utf8")).version).toBe(15)
   } finally {
     await rm(dataDirectory, { recursive: true, force: true })
   }

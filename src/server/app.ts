@@ -9,6 +9,7 @@ import {
   activeEvent,
   activeSeries,
   activeSession,
+  automaticMatteConfiguration,
   captureById,
   sessionCaptures,
   sessionIsReadyForEditing,
@@ -30,6 +31,7 @@ import { SonyFolderReceiver } from "./sony-folder-receiver.js"
 import { WorkflowStore } from "./workflow-store.js"
 import { sha256File } from "./file-hash.js"
 import { performanceReport } from "./performance-report.js"
+import { CleanPlateService } from "./clean-plate-service.js"
 
 export type ServerOptions = {
   dataDirectory: string
@@ -40,6 +42,7 @@ export type ServerOptions = {
   editingDeliveryDelayMilliseconds?: number
   controlledPortraitFixture?: PortraitFixture
   simulatedCaptureProfile?: SimulationProfile
+  controlledCleanPlatePersonDetected?: boolean
 }
 
 const requireText = (value: unknown, label: string): string => {
@@ -81,6 +84,11 @@ const createEditingJob = (event: Event, sessionId: string, capture: Capture, id 
   faceCount: 0,
   portraitWarnings: [],
   backdropCompletion: "unchanged",
+  matte: null,
+  matteConfiguration: automaticMatteConfiguration(process.env.SMARTSTUDIO_MATTE_PROVIDER),
+  cleanPlateId: event.activeCleanPlateId,
+  cleanPlateRelativePath: event.cleanPlates.find((plate) => plate.id === event.activeCleanPlateId)?.relativePath ?? null,
+  cleanPlateSha256: event.cleanPlates.find((plate) => plate.id === event.activeCleanPlateId)?.sha256 ?? null,
   eyeEnhancementEnabled: true,
   teethWhiteningEnabled: true,
   processDiagnostics: [],
@@ -135,6 +143,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
     }).catch(() => undefined)
   })
   const captures = new CaptureService(store, options.dataDirectory, options.testFeatures ? options.simulatedCaptureProfile : undefined)
+  const cleanPlates = new CleanPlateService(store, options.dataDirectory, options.testFeatures ? options.controlledCleanPlatePersonDetected : undefined)
   const editing = new EditingService(
     store,
     options.dataDirectory,
@@ -178,7 +187,7 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
   operations.setCaptureSourceProvider(() => sonyReceiver.snapshot())
   app.addHook("onClose", async () => {
     await sonyReceiver.close()
-    await editing.waitForIdle()
+    await editing.close()
     await operations.waitForBackup()
   })
   await app.register(fastifyMultipart, {
@@ -292,6 +301,8 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
         status: "active",
         sessions: [],
         editingProfile: polishedEventProfile(),
+        cleanPlates: [],
+        activeCleanPlateId: null,
       })
       state.activeEventId = id
     })
@@ -392,6 +403,11 @@ export async function createSmartStudioServer(options: ServerOptions): Promise<F
 
   app.post<{ Params: { id: string }; Body?: { versionId?: string } }>("/api/editing/:id/approve", async (request) => {
     return editing.approve(request.params.id, request.body?.versionId)
+  })
+
+  app.post<{ Params: { id: string } }>("/api/events/:id/clean-plates", async (request) => {
+    const { files } = await request.saveRequestFiles()
+    return cleanPlates.register(request.params.id, files)
   })
 
   app.post<{ Params: { id: string }; Body?: { versionId?: string } }>("/api/editing/:id/reject", async (request) => {

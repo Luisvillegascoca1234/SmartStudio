@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -109,15 +110,57 @@ def confident_eye_pair(eyes, face_width, face_height):
     return ordered if similar_size and aligned and separated else []
 
 
-def apply_controlled(image, level, controlled_arg):
+def matte_summary(matte):
+    return {
+        "provider": matte["provider"],
+        "model": matte["model"],
+        "modelVersion": matte["model_version"],
+        "modelSha256": matte.get("model_sha256"),
+        "confidence": round(float(matte["confidence"]), 5),
+        "boundaryConfidence": round(float(matte.get("boundary_confidence", matte["confidence"])), 5),
+        "uncertainFraction": round(float(np.mean(matte["uncertain"])), 5),
+        "processingRoute": matte["processing_route"],
+        "sessionReused": False,
+        "warmupMilliseconds": 0,
+    }
+
+
+def controlled_matte(person_mask, confident=True, soft=False):
+    alpha = person_mask.astype(np.float32) / 255.0
+    if soft:
+        alpha = cv2.GaussianBlur(alpha, (0, 0), 3.0)
+    person = alpha >= .86
+    background = alpha <= .08
+    uncertain = ~(person | background)
+    return {
+        "alpha": alpha,
+        "person_safe": person,
+        "background_safe": background,
+        "uncertain": uncertain,
+        "confidence": 1.0 if confident else 0.0,
+        "boundary_confidence": 1.0 if confident else 0.0,
+        "provider": "controlled",
+        "model": "controlled-fixture",
+        "model_version": "1",
+        "model_sha256": None,
+        "processing_route": "cpu",
+    }
+
+
+def apply_controlled(image, level, fixture, clean_plate_path=None):
     started = time.perf_counter()
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     height, width = image.shape[:2]
-    if controlled_arg in ("controlled:backdrop", "controlled:backdrop-uncertain-mask"):
+    fixture_kind = fixture.get("kind", "single")
+    if fixture_kind in ("backdrop", "backdrop-soft-edge", "backdrop-uncertain-mask"):
         person_mask = np.zeros((height, width), dtype=np.uint8)
         cv2.ellipse(person_mask, (width // 2, int(height * .58)), (int(width * .18), int(height * .38)), 0, 0, 360, 255, -1)
-        image, backdrop, warning = complete_uniform_backdrop(image, person_mask, controlled_arg != "controlled:backdrop-uncertain-mask")
-        done = backdrop == "completed"
+        matte = controlled_matte(person_mask, fixture_kind != "backdrop-uncertain-mask", fixture_kind == "backdrop-soft-edge")
+        if clean_plate_path:
+            image, backdrop, warning, backdrop_payload = replace_with_clean_plate(image, matte, clean_plate_path)
+        else:
+            image, backdrop, warning, backdrop_payload = complete_uniform_backdrop(image, matte)
+        done = backdrop in ("completed", "replaced")
         return image, {
             "faces": 0, "treated": 0, "warnings": [warning] if warning else [], "backdrop": backdrop,
             "operations": {
@@ -128,9 +171,10 @@ def apply_controlled(image, level, controlled_arg):
                 "backdrop": decision(done, warning, 1 if done else 0),
             },
             "stageMilliseconds": {"analysis": 0, "skin": 0, "eyesTeeth": 0, "facialLighting": 0, "backdrop": round((time.perf_counter() - started) * 1000)},
+            "matte": matte_summary(matte), "_backdrop_payload": backdrop_payload,
         }
-    if controlled_arg.startswith("controlled:") and controlled_arg.removeprefix("controlled:").isdigit():
-        face_count = max(1, int(controlled_arg.removeprefix("controlled:")))
+    if fixture_kind == "group":
+        face_count = max(1, int(fixture.get("faceCount", 1)))
         face_width = .82 / face_count
         faces = [(int(width * (.04 + index * (.92 / face_count))), int(height * .15), int(width * face_width), int(height * .55)) for index in range(face_count)]
     else:
@@ -151,7 +195,7 @@ def apply_controlled(image, level, controlled_arg):
             ((x + int(w*.50), y + int(h*.76)), (max(2, int(w*.20)), max(2, int(h*.08)))),
         ):
             cv2.ellipse(protected, center, axes, 0, 0, 360, 255, -1)
-        if controlled_arg not in ("controlled:uncertain", "controlled:skin-uncertain"):
+        if fixture_kind not in ("uncertain", "skin-uncertain"):
             image, skin_done = polish_skin(image, cv2.bitwise_and(mask, cv2.bitwise_not(protected)), level)
             applied["skin"] += int(skin_done)
             omitted["skin"] += int(not skin_done)
@@ -163,7 +207,7 @@ def apply_controlled(image, level, controlled_arg):
         roi_gray = gray[y:y+h, x:x+w]
         feature_started = time.perf_counter()
         eyes = list(eye_cascade.detectMultiScale(roi_gray[:h//2], 1.1, 5, minSize=(18, 12)))
-        if controlled_arg not in ("controlled:uncertain", "controlled:partial-eyes") and not eyes:
+        if fixture_kind not in ("uncertain", "partial-eyes") and not eyes:
             eyes = [(int(w*.18), int(h*.32), int(w*.18), int(h*.12)), (int(w*.62), int(h*.32), int(w*.18), int(h*.12))]
         eyes = confident_eye_pair(eyes, w, h)
         if not eyes:
@@ -180,9 +224,9 @@ def apply_controlled(image, level, controlled_arg):
             image[y+ey:y+ey+eh, x+ex:x+ex+ew] = cv2.addWeighted(corrected, 1.13, cv2.GaussianBlur(corrected, (0, 0), 1), -.13, 4)
 
         smiles = list(smile_cascade.detectMultiScale(roi_gray[h//2:], 1.5, 20, minSize=(25, 10)))
-        if controlled_arg not in ("controlled:uncertain", "controlled:no-teeth") and not smiles:
+        if fixture_kind not in ("uncertain", "no-teeth") and not smiles:
             smiles = [(int(w*.32), int(h*.25), int(w*.36), int(h*.12))]
-        if controlled_arg in ("controlled:uncertain", "controlled:no-teeth"):
+        if fixture_kind in ("uncertain", "no-teeth"):
             smiles = []
         if not smiles:
             omitted["teeth"] += 1
@@ -216,9 +260,10 @@ def apply_controlled(image, level, controlled_arg):
         for name, count in applied.items()
     }
     operations["backdrop"] = decision(False, "No se detectó una interrupción confirmada del fondo.")
+    matte = controlled_matte(np.zeros((height, width), dtype=np.uint8))
     return image, {
         "faces": len(faces), "treated": len(faces), "warnings": warnings, "backdrop": "unchanged",
-        "operations": operations, "stageMilliseconds": stage_times,
+        "operations": operations, "stageMilliseconds": stage_times, "matte": matte_summary(matte),
     }
 
 
@@ -373,17 +418,16 @@ def backdrop_has_interruption(analysis_image, estimated_backdrop, background_mas
         and differing_extension_pixels >= extension_pixels * .22
     )
     if confirmed:
-        return "confirmed"
+        return "confirmed", upper_extension_mask > 0
     if np.count_nonzero(different_from_plane) >= analysis_width * analysis_height * .01:
-        return "ambiguous"
-    return "none"
+        return "ambiguous", None
+    return "none", None
 
 
-def composite_completed_backdrop(image, person_mask, estimated_backdrop, analysis_background_mask):
-    height, width = image.shape[:2]
-    full_backdrop = cv2.resize(estimated_backdrop, (width, height), interpolation=cv2.INTER_LINEAR)
+def backdrop_blend_mask(image_shape, person_mask, analysis_target_mask):
+    height, width = image_shape[:2]
     replacement_mask = cv2.resize(
-        analysis_background_mask.astype(np.float32),
+        analysis_target_mask.astype(np.float32),
         (width, height),
         interpolation=cv2.INTER_LINEAR,
     )
@@ -397,14 +441,124 @@ def composite_completed_backdrop(image, person_mask, estimated_backdrop, analysi
         replacement_mask,
         (0, 0),
         max(2.0, min(width, height) / 450),
-    )[:, :, None]
+    )
     blend[protected_person] = 0
+    return np.clip(blend, 0.0, 1.0)
+
+
+def composite_completed_backdrop(image, person_mask, estimated_backdrop, analysis_target_mask):
+    height, width = image.shape[:2]
+    full_backdrop = cv2.resize(estimated_backdrop, (width, height), interpolation=cv2.INTER_LINEAR)
+    blend = backdrop_blend_mask(image.shape, person_mask, analysis_target_mask)[:, :, None]
     return np.clip(image * (1 - blend) + full_backdrop * blend, 0, 255).astype(np.uint8)
 
 
-def complete_uniform_backdrop(image, person_mask, segmentation_confident=True):
-    if not segmentation_confident:
-        return image, "omitted", "La máscara de la persona no tuvo suficiente confianza; se conservó el fondo original."
+def composite_backdrop_16_bit(image, payload):
+    if payload.get("kind") == "plate":
+        return composite_plate_16_bit(image, payload)
+    height, width = image.shape[:2]
+    clean_samples = cv2.resize(
+        payload["analysis_clean_samples"].astype(np.uint8),
+        (width, height),
+        interpolation=cv2.INTER_NEAREST,
+    ) > 0
+    sample_rows, sample_columns = np.where(clean_samples)
+    if len(sample_rows) < 100:
+        return image
+    stride = max(1, len(sample_rows) // 100000)
+    sample_rows = sample_rows[::stride]
+    sample_columns = sample_columns[::stride]
+    positions = np.column_stack((
+        sample_columns.astype(np.float32) / width,
+        sample_rows.astype(np.float32) / height,
+        np.ones(len(sample_rows), dtype=np.float32),
+    ))
+    coefficients = np.linalg.lstsq(
+        positions,
+        image[sample_rows, sample_columns].astype(np.float32),
+        rcond=None,
+    )[0]
+    blend = backdrop_blend_mask(image.shape, payload["person_mask"], payload["analysis_target_mask"])
+    output = image.astype(np.float32)
+    normalized_columns = np.arange(width, dtype=np.float32) / width
+    for start in range(0, height, 128):
+        end = min(height, start + 128)
+        normalized_rows = np.arange(start, end, dtype=np.float32)[:, None] / height
+        plane = (
+            normalized_columns[None, :, None] * coefficients[0][None, None, :]
+            + normalized_rows[:, :, None] * coefficients[1][None, None, :]
+            + coefficients[2][None, None, :]
+        )
+        alpha = blend[start:end, :, None]
+        output[start:end] = output[start:end] * (1 - alpha) + plane * alpha
+    return np.clip(np.round(output), 0, 65535).astype(np.uint16)
+
+
+def load_compatible_plate(plate_path, image_shape):
+    plate = cv2.imread(str(plate_path), cv2.IMREAD_UNCHANGED)
+    if plate is None:
+        return None, "La placa limpia no pudo leerse; se conservó el fondo original."
+    if plate.ndim == 2:
+        plate = cv2.cvtColor(plate, cv2.COLOR_GRAY2BGR)
+    if plate.shape[2] > 3:
+        plate = plate[:, :, :3]
+    source_ratio = image_shape[1] / image_shape[0]
+    plate_ratio = plate.shape[1] / plate.shape[0]
+    if abs(source_ratio - plate_ratio) / max(source_ratio, .001) > .08:
+        return None, "La placa limpia no tiene una orientación compatible; se conservó el fondo original."
+    return plate, None
+
+
+def adapt_plate(plate, image, background_safe, maximum):
+    if plate.dtype == np.uint8 and maximum > 255:
+        plate = plate.astype(np.float32) * (maximum / 255.0)
+    else:
+        plate = plate.astype(np.float32)
+    plate = cv2.resize(plate, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LANCZOS4)
+    safe = background_safe & np.all(np.isfinite(plate), axis=2)
+    if np.count_nonzero(safe) < image.shape[0] * image.shape[1] * .05:
+        return None
+    delta = np.median(image[safe].astype(np.float32), axis=0) - np.median(plate[safe], axis=0)
+    return np.clip(plate + delta[None, None, :], 0, maximum)
+
+
+def replace_with_clean_plate(image, matte, plate_path):
+    if matte["confidence"] < .5:
+        return image, "omitted", "El contorno de la persona no alcanzó la confianza obligatoria; se conservó el fondo original.", None
+    plate, warning = load_compatible_plate(plate_path, image.shape)
+    if warning:
+        return image, "omitted", warning, None
+    adapted = adapt_plate(plate, image, matte["background_safe"], 255.0)
+    if adapted is None:
+        return image, "omitted", "No hubo suficiente fondo seguro para adaptar la placa limpia.", None
+    foreground_alpha = np.clip(matte["alpha"], 0.0, 1.0)
+    foreground_alpha[matte["person_safe"]] = 1.0
+    blend = (1.0 - foreground_alpha)[:, :, None]
+    completed = np.clip(image.astype(np.float32) * (1 - blend) + adapted * blend, 0, 255).astype(np.uint8)
+    return completed, "replaced", None, {
+        "kind": "plate",
+        "plate_path": str(plate_path),
+        "foreground_alpha": foreground_alpha,
+        "background_safe": matte["background_safe"],
+    }
+
+
+def composite_plate_16_bit(image, payload):
+    plate, warning = load_compatible_plate(payload["plate_path"], image.shape)
+    if warning:
+        return image
+    adapted = adapt_plate(plate, image, payload["background_safe"], 65535.0)
+    if adapted is None:
+        return image
+    foreground_alpha = payload["foreground_alpha"][:, :, None].astype(np.float32)
+    output = image.astype(np.float32) * foreground_alpha + adapted * (1.0 - foreground_alpha)
+    return np.clip(np.round(output), 0, 65535).astype(np.uint16)
+
+
+def complete_uniform_backdrop(image, matte):
+    if matte["confidence"] < .5:
+        return image, "omitted", "La máscara de la persona no tuvo suficiente confianza; se conservó el fondo original.", None
+    person_mask = np.where(matte["person_safe"] | matte["uncertain"], 255, 0).astype(np.uint8)
     height, width = image.shape[:2]
     analysis_width = min(480, width)
     analysis_height = max(1, round(height * analysis_width / width))
@@ -420,8 +574,8 @@ def complete_uniform_backdrop(image, person_mask, segmentation_confident=True):
         analysis_background_mask,
     )
     if warning:
-        return image, "omitted", warning
-    interruption = backdrop_has_interruption(
+        return image, "omitted", warning, None
+    interruption, target_mask = backdrop_has_interruption(
         analysis_image,
         estimated_backdrop,
         analysis_background_mask,
@@ -430,14 +584,18 @@ def complete_uniform_backdrop(image, person_mask, segmentation_confident=True):
         clean_threshold,
     )
     if interruption == "ambiguous":
-        return image, "omitted", "No se distinguió con confianza el fondo uniforme de otras superficies; se conservó el original."
+        return image, "omitted", "No se distinguió con confianza el fondo uniforme de otras superficies; se conservó el original.", None
     if interruption == "none":
-        return image, "unchanged", None
-    completed = composite_completed_backdrop(image, person_mask, estimated_backdrop, analysis_background_mask)
-    return completed, "completed", None
+        return image, "unchanged", None, None
+    completed = composite_completed_backdrop(image, person_mask, estimated_backdrop, target_mask)
+    return completed, "completed", None, {
+        "analysis_clean_samples": clean_samples,
+        "analysis_target_mask": target_mask,
+        "person_mask": person_mask,
+    }
 
 
-def confident_segmentation(category_mask, confidence_masks):
+def segmentation_confidence(category_mask, confidence_masks):
     height, width = category_mask.shape
     analysis_width = min(320, width)
     analysis_height = max(1, round(height * analysis_width / width))
@@ -447,20 +605,228 @@ def confident_segmentation(category_mask, confidence_masks):
         for mask in confidence_masks
     ]
     if not resized_confidence:
-        return False
+        return False, 0.0
     best_confidence = np.maximum.reduce(resized_confidence)
     person = small_category > 0
     if np.count_nonzero(person) < analysis_width * analysis_height * .02:
-        return False
+        return False, 0.0
+    score = min(
+        float(np.mean(best_confidence)),
+        float(np.mean(best_confidence[person])),
+        max(0.0, 1.0 - float(np.mean(best_confidence < .55))),
+    )
     return (
         float(np.mean(best_confidence)) >= .72
         and float(np.mean(best_confidence < .55)) <= .12
         and float(np.mean(best_confidence[person])) >= .68
-    )
+    ), score
 
 
-def apply_mediapipe(image, level, model_directory):
+def refine_alpha(image, alpha):
+    full_alpha = cv2.resize(alpha.astype(np.float32), (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LINEAR)
+    guide = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+    if hasattr(cv2, "ximgproc") and hasattr(cv2.ximgproc, "guidedFilter"):
+        refined = cv2.ximgproc.guidedFilter(guide, full_alpha, max(4, min(image.shape[:2]) // 300), 1e-3)
+    else:
+        refined = cv2.bilateralFilter(full_alpha, 7, .08, 5)
+    return np.clip(refined, 0.0, 1.0)
+
+
+def mediapipe_matte(image, category_mask, confidence_masks, model_path):
+    if len(confidence_masks) > 1:
+        background_probability = np.squeeze(confidence_masks[0]).astype(np.float32)
+        alpha = 1.0 - background_probability
+    else:
+        alpha = (category_mask > 0).astype(np.float32)
+    alpha = refine_alpha(image, alpha)
+    rough_person = alpha >= .5
+    radius = max(2, round(min(image.shape[:2]) * .0025))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+    expanded = cv2.dilate(rough_person.astype(np.uint8), kernel) > 0
+    contracted = cv2.erode(rough_person.astype(np.uint8), kernel) > 0
+    boundary = expanded ^ contracted
+    person = (alpha >= .88) & ~boundary
+    background = (alpha <= .08) & ~boundary
+    uncertain = ~(person | background)
+    pixel_confidence = np.abs(alpha - .5) * 2.0
+    boundary_confidence = float(np.mean(pixel_confidence[boundary])) if np.any(boundary) else 0.0
+    person_coverage = float(np.mean(rough_person))
+    uncertain_fraction = float(np.mean(uncertain))
+    confident = person_coverage >= .02 and boundary_confidence >= .58 and uncertain_fraction <= .22
+    return {
+        "alpha": alpha,
+        "person_safe": person,
+        "background_safe": background,
+        "uncertain": uncertain,
+        "confidence": boundary_confidence if confident else 0.0,
+        "boundary_confidence": boundary_confidence,
+        "provider": "mediapipe",
+        "model": model_path.name,
+        "model_version": "1",
+        "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
+        "processing_route": "cpu",
+    }
+
+
+_MEDIAPIPE_SESSION_CACHE = {}
+_BIREFNET_SESSION_CACHE = {}
+
+BIREFNET_MODEL_NAME = "birefnet-general-lite.onnx"
+BIREFNET_MODEL_VERSION = "general-lite-epoch-232"
+BIREFNET_MODEL_SHA256 = "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333"
+MEDIAPIPE_SEGMENT_MODEL_SHA256 = "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0"
+
+
+def mediapipe_sessions(model_directory):
     import mediapipe as mp
+
+    cache_key = str(model_directory.resolve())
+    if cache_key in _MEDIAPIPE_SESSION_CACHE:
+        return _MEDIAPIPE_SESSION_CACHE[cache_key]
+    face_model = model_directory / "face_landmarker.task"
+    segment_model = model_directory / "selfie_multiclass_256x256.tflite"
+    landmarker = None
+    segmenter = None
+    if face_model.is_file():
+        face_options = mp.tasks.vision.FaceLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(face_model)),
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            num_faces=20,
+            min_face_detection_confidence=.55,
+            min_face_presence_confidence=.55,
+            output_face_blendshapes=False,
+        )
+        landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(face_options)
+    if segment_model.is_file():
+        if hashlib.sha256(segment_model.read_bytes()).hexdigest() != MEDIAPIPE_SEGMENT_MODEL_SHA256:
+            raise RuntimeError("El checkpoint local de segmentación MediaPipe no coincide con la versión aprobada.")
+        segment_options = mp.tasks.vision.ImageSegmenterOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(segment_model)),
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            output_category_mask=True,
+            output_confidence_masks=True,
+        )
+        segmenter = mp.tasks.vision.ImageSegmenter.create_from_options(segment_options)
+    sessions = (mp, landmarker, segmenter)
+    _MEDIAPIPE_SESSION_CACHE[cache_key] = sessions
+    return sessions
+
+
+def configured_matte_provider(requested=None):
+    provider = (requested or os.environ.get("SMARTSTUDIO_MATTE_PROVIDER", "mediapipe")).strip().lower()
+    return "birefnet" if provider == "birefnet" else "mediapipe"
+
+
+def birefnet_session(model_directory):
+    import onnxruntime as ort
+
+    model_path = model_directory / BIREFNET_MODEL_NAME
+    if not model_path.is_file():
+        raise RuntimeError(f"Falta el checkpoint local {BIREFNET_MODEL_NAME}; ejecuta setup:vision antes del evento.")
+    digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    if digest != BIREFNET_MODEL_SHA256:
+        raise RuntimeError(f"El checkpoint local {BIREFNET_MODEL_NAME} no coincide con la versión aprobada.")
+
+    force_cpu = os.environ.get("SMARTSTUDIO_BIREFNET_FORCE_CPU") == "1"
+    cache_key = (str(model_path.resolve()), force_cpu)
+    if cache_key in _BIREFNET_SESSION_CACHE:
+        return _BIREFNET_SESSION_CACHE[cache_key]
+
+    available = ort.get_available_providers()
+    requested = ["CPUExecutionProvider"]
+    fallback = None
+    if not force_cpu and "CUDAExecutionProvider" in available:
+        requested = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    try:
+        session = ort.InferenceSession(str(model_path), providers=requested)
+    except Exception as error:
+        if requested[0] != "CUDAExecutionProvider":
+            raise
+        session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        fallback = f"CUDA no pudo iniciar; BiRefNet continuó en CPU: {error}"
+    effective = session.get_providers()
+    route = "gpu" if effective and effective[0] == "CUDAExecutionProvider" else "cpu"
+    if requested[0] == "CUDAExecutionProvider" and route == "cpu" and fallback is None:
+        fallback = "CUDA no pudo activarse; ONNX Runtime continuó automáticamente en CPU."
+    payload = (session, route, fallback, model_path)
+    _BIREFNET_SESSION_CACHE[cache_key] = payload
+    return payload
+
+
+def matte_from_alpha(image, alpha, provider, model, model_version, model_sha256, processing_route):
+    alpha = refine_alpha(image, alpha)
+    rough_person = alpha >= .5
+    radius = max(2, round(min(image.shape[:2]) * .0025))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+    expanded = cv2.dilate(rough_person.astype(np.uint8), kernel) > 0
+    contracted = cv2.erode(rough_person.astype(np.uint8), kernel) > 0
+    boundary = expanded ^ contracted
+    person = (alpha >= .88) & ~boundary
+    background = (alpha <= .08) & ~boundary
+    uncertain = ~(person | background)
+    pixel_confidence = np.abs(alpha - .5) * 2.0
+    boundary_confidence = float(np.mean(pixel_confidence[boundary])) if np.any(boundary) else 0.0
+    person_coverage = float(np.mean(rough_person))
+    uncertain_fraction = float(np.mean(uncertain))
+    confident = person_coverage >= .02 and boundary_confidence >= .58 and uncertain_fraction <= .22
+    return {
+        "alpha": alpha,
+        "person_safe": person,
+        "background_safe": background,
+        "uncertain": uncertain,
+        "confidence": boundary_confidence if confident else 0.0,
+        "boundary_confidence": boundary_confidence,
+        "provider": provider,
+        "model": model,
+        "model_version": model_version,
+        "model_sha256": model_sha256,
+        "processing_route": processing_route,
+    }
+
+
+def birefnet_matte(image, model_directory):
+    session, route, fallback, model_path = birefnet_session(model_directory)
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    resized = cv2.resize(rgb, (1024, 1024), interpolation=cv2.INTER_LANCZOS4).astype(np.float32) / 255.0
+    mean = np.array([.485, .456, .406], dtype=np.float32)
+    std = np.array([.229, .224, .225], dtype=np.float32)
+    tensor = np.transpose((resized - mean) / std, (2, 0, 1))[None].astype(np.float32)
+    prediction = session.run(None, {session.get_inputs()[0].name: tensor})[0]
+    logits = np.squeeze(prediction).astype(np.float32)
+    probability = 1.0 / (1.0 + np.exp(-np.clip(logits, -30, 30)))
+    low, high = float(np.min(probability)), float(np.max(probability))
+    alpha = (probability - low) / max(high - low, 1e-6)
+    matte = matte_from_alpha(
+        image, alpha, "birefnet", BIREFNET_MODEL_NAME, BIREFNET_MODEL_VERSION,
+        hashlib.sha256(model_path.read_bytes()).hexdigest(), route,
+    )
+    return matte, fallback
+
+
+def warm_models(model_directory):
+    started = time.perf_counter()
+    _, landmarker, segmenter = mediapipe_sessions(model_directory)
+    candidate_ready = False
+    candidate_route = None
+    candidate_fallback = None
+    if configured_matte_provider() == "birefnet":
+        try:
+            _, candidate_route, candidate_fallback, _ = birefnet_session(model_directory)
+            candidate_ready = True
+        except Exception as error:
+            candidate_fallback = f"BiRefNet no pudo prepararse; se usará MediaPipe: {error}"
+    return {
+        "ready": landmarker is not None and segmenter is not None,
+        "matteProvider": configured_matte_provider(),
+        "candidateReady": candidate_ready,
+        "candidateRoute": candidate_route,
+        "candidateFallback": candidate_fallback,
+        "warmupMilliseconds": round((time.perf_counter() - started) * 1000),
+    }
+
+
+def apply_mediapipe(image, level, model_directory, clean_plate_path=None, matte_provider=None):
+    mp, landmarker, segmenter = mediapipe_sessions(model_directory)
 
     total_started = time.perf_counter()
     stage_times = {"analysis": 0, "skin": 0, "eyesTeeth": 0, "facialLighting": 0, "backdrop": 0}
@@ -471,32 +837,27 @@ def apply_mediapipe(image, level, model_directory):
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     face_landmarks = []
     warnings = []
-    if face_model.is_file():
-        face_options = mp.tasks.vision.FaceLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(face_model)),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
-            num_faces=20,
-            min_face_detection_confidence=.55,
-            min_face_presence_confidence=.55,
-            output_face_blendshapes=False,
-        )
-        with mp.tasks.vision.FaceLandmarker.create_from_options(face_options) as landmarker:
-            face_landmarks = landmarker.detect(mp_image).face_landmarks
+    if landmarker is not None:
+        face_landmarks = landmarker.detect(mp_image).face_landmarks
     else:
         warnings.append("Falta el modelo local de landmarks faciales; se omitió el retoque facial.")
 
     category_mask = None
-    if segment_model.is_file():
-        segment_options = mp.tasks.vision.ImageSegmenterOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(segment_model)),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
-            output_category_mask=True,
-            output_confidence_masks=True,
-        )
-        with mp.tasks.vision.ImageSegmenter.create_from_options(segment_options) as segmenter:
-            segment_result = segmenter.segment(mp_image)
-            category_mask = np.squeeze(np.array(segment_result.category_mask.numpy_view(), copy=True))
-            segmentation_confident = confident_segmentation(category_mask, segment_result.confidence_masks)
+    matte = None
+    if segmenter is not None:
+        segment_result = segmenter.segment(mp_image)
+        category_mask = np.squeeze(np.array(segment_result.category_mask.numpy_view(), copy=True))
+        confidence_masks = [np.squeeze(np.array(mask.numpy_view(), copy=True)) for mask in segment_result.confidence_masks]
+        if configured_matte_provider(matte_provider) == "birefnet":
+            try:
+                matte, candidate_fallback = birefnet_matte(image, model_directory)
+                if candidate_fallback:
+                    warnings.append(candidate_fallback)
+            except Exception as error:
+                warnings.append(f"BiRefNet no estuvo disponible; se recurrió automáticamente a MediaPipe: {error}")
+                matte = mediapipe_matte(image, category_mask, confidence_masks, segment_model)
+        else:
+            matte = mediapipe_matte(image, category_mask, confidence_masks, segment_model)
         if category_mask.shape != image.shape[:2]:
             category_mask = cv2.resize(category_mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
     else:
@@ -506,8 +867,10 @@ def apply_mediapipe(image, level, model_directory):
     backdrop = "omitted"
     backdrop_started = time.perf_counter()
     if category_mask is not None:
-        person_mask = np.where(category_mask > 0, 255, 0).astype(np.uint8)
-        image, backdrop, backdrop_warning = complete_uniform_backdrop(image, person_mask, segmentation_confident)
+        if clean_plate_path:
+            image, backdrop, backdrop_warning, backdrop_payload = replace_with_clean_plate(image, matte, clean_plate_path)
+        else:
+            image, backdrop, backdrop_warning, backdrop_payload = complete_uniform_backdrop(image, matte)
         if backdrop_warning:
             warnings.append(backdrop_warning)
     else:
@@ -523,9 +886,13 @@ def apply_mediapipe(image, level, model_directory):
             "operations": {
                 "skin": decision(False, no_face), "eyes": decision(False, no_face),
                 "teeth": decision(False, no_face), "facialLighting": decision(False, no_face),
-                "backdrop": decision(backdrop == "completed", None if backdrop == "completed" else "El fondo no cumplió los límites de confianza.", 1 if backdrop == "completed" else 0),
+                "backdrop": decision(backdrop in ("completed", "replaced"), None if backdrop in ("completed", "replaced") else "El fondo no cumplió los límites de confianza.", 1 if backdrop in ("completed", "replaced") else 0),
             },
             "stageMilliseconds": stage_times,
+            "matte": matte_summary(matte) if matte is not None else {
+                "provider": "mediapipe", "model": segment_model.name, "modelVersion": "1", "modelSha256": None,
+                "confidence": 0.0, "boundaryConfidence": 0.0, "uncertainFraction": 1.0, "processingRoute": "cpu", "sessionReused": False, "warmupMilliseconds": 0,
+            }, "_backdrop_payload": backdrop_payload if category_mask is not None else None,
         }
 
     treated = 0
@@ -578,19 +945,21 @@ def apply_mediapipe(image, level, model_directory):
         name: {**decision(count > 0, operation_reasons[name] if omitted[name] else None, count), "omittedRegions": omitted[name]}
         for name, count in applied.items()
     }
-    operations["backdrop"] = decision(backdrop == "completed", None if backdrop == "completed" else "El fondo no requirió completado o no alcanzó la confianza obligatoria.", 1 if backdrop == "completed" else 0)
+    operations["backdrop"] = decision(backdrop in ("completed", "replaced"), None if backdrop in ("completed", "replaced") else "El fondo no requirió completado o no alcanzó la confianza obligatoria.", 1 if backdrop in ("completed", "replaced") else 0)
     return image, {
         "faces": len(face_landmarks), "treated": treated, "warnings": warnings, "backdrop": backdrop,
         "operations": operations, "stageMilliseconds": stage_times,
+        "matte": matte_summary(matte) if matte is not None else {
+            "provider": "mediapipe", "model": segment_model.name, "modelVersion": "1", "modelSha256": None,
+            "confidence": 0.0, "boundaryConfidence": 0.0, "uncertainFraction": 1.0, "processingRoute": "cpu", "sessionReused": False, "warmupMilliseconds": 0,
+        }, "_backdrop_payload": backdrop_payload if category_mask is not None else None,
     }
 
 
-def main():
-    source, destination = sys.argv[1], sys.argv[2]
-    level = min(2, max(0, int(sys.argv[3])))
-    controlled_arg = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "-" else ""
-    default_models = Path(os.environ.get("SMARTSTUDIO_MODEL_DIR", Path.cwd() / ".smartstudio-data" / "models"))
-    model_directory = Path(sys.argv[5]) if len(sys.argv) > 5 else default_models
+def process_image(source, destination, level, fixture, model_directory, clean_plate_path=None, matte_provider=None):
+    level = min(2, max(0, int(level)))
+    source = str(source)
+    destination = str(destination)
     source_image = cv2.imread(source, cv2.IMREAD_UNCHANGED)
     if source_image is None:
         raise RuntimeError("No se pudo leer la imagen para el retoque facial.")
@@ -601,15 +970,15 @@ def main():
     source_is_16_bit = source_image.dtype == np.uint16
     image = np.round(source_image.astype(np.float32) / 257).astype(np.uint8) if source_is_16_bit else source_image
 
-    if controlled_arg.startswith("controlled"):
-        image, result = apply_controlled(image, level, controlled_arg)
+    if fixture is not None:
+        image, result = apply_controlled(image, level, fixture, clean_plate_path)
     else:
         try:
-            image, result = apply_mediapipe(image, level, model_directory)
+            image, result = apply_mediapipe(image, level, model_directory, clean_plate_path, matte_provider)
         except Exception as error:
             shutil.copyfile(source, destination)
             omitted_reason = f"MediaPipe no estuvo disponible; se omitió el retoque: {error}"
-            print(json.dumps({
+            return {
                 "faces": 0,
                 "treated": 0,
                 "warnings": [omitted_reason],
@@ -620,16 +989,22 @@ def main():
                     "backdrop": decision(False, omitted_reason),
                 },
                 "stageMilliseconds": {"analysis": 0, "skin": 0, "eyesTeeth": 0, "facialLighting": 0, "backdrop": 0},
-            }))
-            return
+                "matte": {
+                    "provider": "mediapipe", "model": "unavailable", "modelVersion": "1", "modelSha256": None,
+                    "confidence": 0.0, "boundaryConfidence": 0.0, "uncertainFraction": 1.0, "processingRoute": "cpu", "sessionReused": False, "warmupMilliseconds": 0,
+                },
+            }
 
-    if result["faces"] == 0 and result["backdrop"] != "completed":
+    backdrop_payload = result.pop("_backdrop_payload", None)
+    if result["faces"] == 0 and result["backdrop"] not in ("completed", "replaced"):
         shutil.copyfile(source, destination)
     else:
         if source_is_16_bit:
             source_preview = np.round(source_image.astype(np.float32) / 257).astype(np.int32)
             correction = image.astype(np.int32) - source_preview
             output = np.clip(source_image.astype(np.int32) + correction * 257, 0, 65535).astype(np.uint16)
+            if backdrop_payload is not None:
+                output = composite_backdrop_16_bit(output, backdrop_payload)
         elif Path(destination).suffix.lower() in (".tif", ".tiff"):
             output = image.astype(np.uint16) * 257
         else:
@@ -637,7 +1012,18 @@ def main():
         parameters = [cv2.IMWRITE_TIFF_COMPRESSION, 5] if Path(destination).suffix.lower() in (".tif", ".tiff") else [cv2.IMWRITE_JPEG_QUALITY, 94]
         if not cv2.imwrite(destination, output, parameters):
             raise RuntimeError("No se pudo guardar el retoque facial.")
-    print(json.dumps(result))
+    return result
+
+
+def main():
+    source, destination = sys.argv[1], sys.argv[2]
+    level = int(sys.argv[3])
+    fixture = json.loads(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] != "-" else None
+    default_models = Path(os.environ.get("SMARTSTUDIO_MODEL_DIR", Path.cwd() / ".smartstudio-data" / "models"))
+    model_directory = Path(sys.argv[5]) if len(sys.argv) > 5 else default_models
+    clean_plate_path = Path(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] != "-" else None
+    matte_provider = sys.argv[7] if len(sys.argv) > 7 and sys.argv[7] != "-" else None
+    print(json.dumps(process_image(source, destination, level, fixture, model_directory, clean_plate_path, matte_provider)))
 
 
 if __name__ == "__main__":

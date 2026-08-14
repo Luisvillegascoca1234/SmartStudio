@@ -6,15 +6,54 @@ export type QualityWarning =
   | "exposure"
   | "incomplete-file"
 
-export const BACKDROP_COMPLETION_VALUES = ["completed", "unchanged", "omitted"] as const
+export const BACKDROP_COMPLETION_VALUES = ["replaced", "completed", "unchanged", "omitted"] as const
 export type BackdropCompletion = typeof BACKDROP_COMPLETION_VALUES[number]
 export const BACKDROP_COMPLETION_LABELS: Record<BackdropCompletion, string> = {
+  replaced: "reemplazado",
   completed: "completado",
   unchanged: "sin cambios",
   omitted: "omitido",
 }
 export const isBackdropCompletion = (value: unknown): value is BackdropCompletion =>
   BACKDROP_COMPLETION_VALUES.includes(value as BackdropCompletion)
+
+export type MatteProvenance = {
+  provider: "controlled" | "mediapipe" | "birefnet"
+  model: string
+  modelVersion: string
+  modelSha256: string | null
+  confidence: number
+  boundaryConfidence: number
+  uncertainFraction: number
+  processingRoute: "cpu" | "gpu"
+  sessionReused: boolean
+  warmupMilliseconds: number
+}
+
+export type MatteConfiguration = {
+  provider: "mediapipe" | "birefnet"
+  model: string
+  modelVersion: string
+  modelSha256: string
+  parametersVersion: "background-matte-v1"
+}
+
+export const automaticMatteConfiguration = (provider?: string): MatteConfiguration =>
+  provider === "birefnet"
+    ? {
+        provider: "birefnet",
+        model: "birefnet-general-lite.onnx",
+        modelVersion: "general-lite-epoch-232",
+        modelSha256: "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
+        parametersVersion: "background-matte-v1",
+      }
+    : {
+        provider: "mediapipe",
+        model: "selfie_multiclass_256x256.tflite",
+        modelVersion: "1",
+        modelSha256: "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0",
+        parametersVersion: "background-matte-v1",
+      }
 
 export type QualityAssessment = {
   score: number
@@ -61,6 +100,19 @@ export type PhotoSession = {
   series: Series[]
 }
 
+export type CleanPlateReference = {
+  id: string
+  relativePath: string
+  sha256: string
+  width: number
+  height: number
+  orientation: number
+  createdAt: string
+  validatedAt: string
+  validationMethod: "local-mediapipe" | "controlled-fixture"
+  supersedesId: string | null
+}
+
 export type Event = {
   id: string
   name: string
@@ -71,6 +123,8 @@ export type Event = {
   status: "active" | "closed"
   sessions: PhotoSession[]
   editingProfile: EditingProfile
+  cleanPlates: CleanPlateReference[]
+  activeCleanPlateId: string | null
 }
 
 export type EditingAdjustments = {
@@ -184,6 +238,11 @@ export type EditingJob = {
   faceCount: number
   portraitWarnings: string[]
   backdropCompletion: BackdropCompletion
+  matte: MatteProvenance | null
+  matteConfiguration: MatteConfiguration | null
+  cleanPlateId: string | null
+  cleanPlateRelativePath: string | null
+  cleanPlateSha256: string | null
   eyeEnhancementEnabled: boolean
   teethWhiteningEnabled: boolean
   processDiagnostics: ProcessDiagnostic[]
@@ -232,10 +291,19 @@ export type EditingVersion = {
   height: number | null
   backupStatus: "pending" | "verified" | "failed"
   backupError: string | null
+  backdropCompletion: BackdropCompletion
+  matte: MatteProvenance | null
+  matteConfiguration: MatteConfiguration | null
+  backdropReason: string | null
+  portraitWarnings: string[]
+  stageMilliseconds: RetouchStageMilliseconds
+  cleanPlateId: string | null
+  cleanPlateRelativePath: string | null
+  cleanPlateSha256: string | null
 }
 
 export type WorkflowState = {
-  version: 13
+  version: 15
   events: Event[]
   editingJobs: EditingJob[]
   activeEventId: string | null
@@ -243,7 +311,7 @@ export type WorkflowState = {
 }
 
 export const emptyWorkflowState = (): WorkflowState => ({
-  version: 13,
+  version: 15,
   events: [],
   editingJobs: [],
   activeEventId: null,

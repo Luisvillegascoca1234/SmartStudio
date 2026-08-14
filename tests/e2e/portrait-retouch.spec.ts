@@ -198,9 +198,70 @@ test("completa un fondo uniforme interrumpido sin modificar la persona protegida
     const result = await new PortraitRetoucher().apply(source, destination, 0, { kind: "backdrop" })
     const after = await sharp(destination).removeAlpha().raw().toBuffer({ resolveWithObject: true })
     const pixel = (data: Buffer, x: number, y: number) => data.subarray((y * 900 + x) * 3, (y * 900 + x) * 3 + 3)
-    expect(result.backdrop).toBe("completed")
+    expect(result.backdrop, JSON.stringify(result)).toBe("completed")
+    expect(result.matte).toMatchObject({ provider: "controlled", model: "controlled-fixture", confidence: 1, processingRoute: "cpu" })
     expect(pixel(after.data, 100, 80)).not.toEqual(pixel(before.data, 100, 80))
+    expect(pixel(after.data, 100, 520)).toEqual(pixel(before.data, 100, 520))
     expect(pixel(after.data, 450, 350)).toEqual(pixel(before.data, 450, 350))
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("compone la región confirmada con precisión efectiva de 16 bits", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-backdrop-16-bit-"))
+  try {
+    const width = 900
+    const height = 600
+    const source = path.join(directory, "gradient.tif")
+    const destination = path.join(directory, "completed.tif")
+    const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#687f85"/><stop offset="1" stop-color="#70878d"/></linearGradient></defs>
+      <rect width="${width}" height="${height}" fill="url(#background)"/>
+      <path d="M0 0H900V165L0 235Z" fill="#777b80"/>
+      <ellipse cx="450" cy="350" rx="162" ry="228" fill="#b97852"/>
+    </svg>`
+    await sharp(Buffer.from(svg)).toColourspace("rgb16").linear(.997, 37).tiff({ compression: "lzw" }).toFile(source)
+    const before = await sharp(source).raw({ depth: "ushort" }).toBuffer()
+    const result = await new PortraitRetoucher().apply(source, destination, 0, { kind: "backdrop" })
+    const after = await sharp(destination).raw({ depth: "ushort" }).toBuffer()
+    const beforeValues = new Uint16Array(before.buffer, before.byteOffset, before.byteLength / 2)
+    const afterValues = new Uint16Array(after.buffer, after.byteOffset, after.byteLength / 2)
+    const deltas: number[] = []
+    for (let y = 20; y < 150; y += 13) for (let x = 40; x < 860; x += 17) {
+      const index = (y * width + x) * 3
+      const delta = Math.abs(afterValues[index] - beforeValues[index])
+      if (delta > 0) deltas.push(delta)
+    }
+    expect(result.backdrop, JSON.stringify(result)).toBe("completed")
+    expect((await sharp(destination).metadata()).depth).toBe("ushort")
+    expect(deltas.length).toBeGreaterThan(20)
+    expect(deltas.some((delta) => delta % 257 !== 0)).toBe(true)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("protege un contorno suave mediante una banda de matte incierta", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "smartstudio-backdrop-soft-edge-"))
+  try {
+    const source = path.join(directory, "soft-edge.png")
+    const destination = path.join(directory, "completed.png")
+    const svg = `<svg width="900" height="600" xmlns="http://www.w3.org/2000/svg">
+      <rect width="900" height="600" fill="#6f9ca8"/>
+      <path d="M0 0H900V165L0 235Z" fill="#777b80"/>
+      <ellipse cx="450" cy="350" rx="135" ry="215" fill="#b97852"/>
+    </svg>`
+    await sharp(Buffer.from(svg)).png().toFile(source)
+    const before = await sharp(source).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const result = await new PortraitRetoucher().apply(source, destination, 0, { kind: "backdrop-soft-edge" })
+    const after = await sharp(destination).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const pixel = (data: Buffer, x: number, y: number) => data.subarray((y * 900 + x) * 3, (y * 900 + x) * 3 + 3)
+    expect(result.backdrop).toBe("completed")
+    expect(result.matte.uncertainFraction).toBeGreaterThan(0)
+    expect(result.matte.boundaryConfidence).toBe(1)
+    expect(pixel(after.data, 450, 350)).toEqual(pixel(before.data, 450, 350))
+    expect(pixel(after.data, 585, 350)).toEqual(pixel(before.data, 585, 350))
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -286,6 +347,7 @@ test("mantiene el completado en la vista previa y el JPEG completo aprobado", as
     await expect(card.getByText("Fondo: completado", { exact: true })).toBeVisible()
     state = await application.state()
     expect(state.editingJobs[0].backdropCompletion).toBe("completed")
+    expect(state.editingJobs[0].matte).toMatchObject({ provider: "controlled", modelVersion: "1", confidence: 1 })
     const preview = await application.readDataFile(state.editingJobs[0].previewRelativePath!)
 
     await card.getByRole("button", { name: "Aprobar edición" }).click()
@@ -303,6 +365,97 @@ test("mantiene el completado en la vista previa y el JPEG completo aprobado", as
     expect(colorDistance(previewTop, deliveryTop)).toBeLessThan(12)
     await application.reopen()
     expect((await application.state()).editingJobs[0].backdropCompletion).toBe("completed")
+  } finally {
+    await application.close()
+  }
+})
+
+test("reemplaza automáticamente el fondo mediante la placa limpia del evento", async ({ browser }) => {
+  const application = await TestApplication.start(browser, "smartstudio-clean-plate-flow-", {
+    testFeatures: true,
+    controlledCleanPlatePersonDetected: false,
+    controlledPortraitFixture: { kind: "backdrop-soft-edge" },
+    simulatedCaptureProfile: "backdrop",
+  })
+  try {
+    await application.page.getByLabel("Nombre del evento").fill("Reemplazo controlado")
+    await application.page.getByRole("button", { name: "Crear evento" }).click()
+    const plate = await sharp({ create: { width: 900, height: 600, channels: 3, background: "#507b8a" } }).png().toBuffer()
+    await application.page.getByLabel("Placa limpia").setInputFiles({ name: "placa.png", mimeType: "image/png", buffer: plate })
+    await application.page.getByRole("button", { name: "Validar placa" }).click()
+    await expect(application.page.getByText("Validada · 1 versión")).toBeVisible()
+
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
+    await application.page.getByRole("button", { name: "Iniciar serie" }).click()
+    await application.page.getByRole("button", { name: "Simular captura RAW + JPEG" }).click()
+    await expect(application.page.getByText("RAW + JPEG asociados", { exact: false })).toBeVisible()
+    await application.page.getByRole("button", { name: "Cerrar serie" }).click()
+    await application.page.getByRole("button", { name: "Seleccionar", exact: true }).click()
+    await application.page.getByRole("button", { name: "Marcar principal" }).click()
+    await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
+
+    let state = await application.state()
+    const card = application.page.getByTestId(`editing-job-${state.events[0].sessions[0].series[0].captures[0].baseName}`)
+    await expect(card.getByText("Fondo: reemplazado", { exact: true })).toBeVisible()
+    state = await application.state()
+    const job = state.editingJobs[0]
+    expect(job.backdropCompletion).toBe("replaced")
+    expect(job.cleanPlateId).toBe(state.events[0].activeCleanPlateId)
+    expect(job.cleanPlateSha256).toBe(state.events[0].cleanPlates[0].sha256)
+    expect(job.versions[0]).toMatchObject({
+      backdropCompletion: "replaced",
+      backdropReason: null,
+      cleanPlateId: job.cleanPlateId,
+      cleanPlateRelativePath: job.cleanPlateRelativePath,
+      cleanPlateSha256: job.cleanPlateSha256,
+      matteConfiguration: job.matteConfiguration,
+      portraitWarnings: [],
+      previewMasterSha256: job.versions[0].masterSha256,
+    })
+    expect(job.versions[0].stageMilliseconds.backdrop).toBeGreaterThanOrEqual(0)
+    await expect(card.getByLabel("Máscara de fondo")).toHaveCount(0)
+    await expect(card.getByLabel("Intensidad de fondo")).toHaveCount(0)
+  } finally {
+    await application.close()
+  }
+})
+
+test("una placa alterada omite solo el fondo y conserva una versión explicable", async ({ browser }) => {
+  const application = await TestApplication.start(browser, "smartstudio-clean-plate-integrity-", {
+    testFeatures: true,
+    editingProcessingDelayMilliseconds: 1_500,
+    controlledCleanPlatePersonDetected: false,
+    controlledPortraitFixture: { kind: "backdrop-soft-edge" },
+    simulatedCaptureProfile: "backdrop",
+  })
+  try {
+    await application.page.getByLabel("Nombre del evento").fill("Integridad de placa")
+    await application.page.getByRole("button", { name: "Crear evento" }).click()
+    const plate = await sharp({ create: { width: 900, height: 600, channels: 3, background: "#507b8a" } }).png().toBuffer()
+    await application.page.getByLabel("Placa limpia").setInputFiles({ name: "placa.png", mimeType: "image/png", buffer: plate })
+    await application.page.getByRole("button", { name: "Validar placa" }).click()
+    await expect(application.page.getByText("Validada · 1 versión")).toBeVisible()
+
+    await application.page.getByRole("button", { name: "Iniciar sesión fotográfica" }).click()
+    await application.page.getByRole("button", { name: "Iniciar serie" }).click()
+    await application.page.getByRole("button", { name: "Simular captura RAW + JPEG" }).click()
+    await expect(application.page.getByText("RAW + JPEG asociados", { exact: false })).toBeVisible()
+    await application.page.getByRole("button", { name: "Cerrar serie" }).click()
+    await application.page.getByRole("button", { name: "Seleccionar", exact: true }).click()
+    await application.page.getByRole("button", { name: "Marcar principal" }).click()
+    await application.page.getByRole("button", { name: "Finalizar sesión fotográfica" }).click()
+    await expect.poll(async () => (await application.state()).editingJobs.length).toBe(1)
+    const queued = (await application.state()).editingJobs[0]
+    await application.overwriteDataFile(queued.cleanPlateRelativePath!, Buffer.from("placa alterada"))
+
+    const card = application.page.getByTestId(`editing-job-${(await application.state()).events[0].sessions[0].series[0].captures[0].baseName}`)
+    await expect(card.getByText("Lista para revisar", { exact: true })).toBeVisible()
+    const completed = (await application.state()).editingJobs[0]
+    expect(completed.backdropCompletion).toBe("omitted")
+    expect(completed.versions).toHaveLength(1)
+    expect(completed.versions[0].backdropReason).toContain("hash de la placa")
+    expect(completed.versions[0].cleanPlateSha256).toBe(queued.cleanPlateSha256)
+    expect(completed.versions[0].portraitWarnings).toContain("El hash de la placa fijada ya no coincide; se omitió únicamente el fondo.")
   } finally {
     await application.close()
   }

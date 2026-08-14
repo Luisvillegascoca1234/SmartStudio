@@ -49,7 +49,7 @@ export class EditingService {
     private readonly controlledPortraitFixture?: PortraitFixture,
   ) {
     this.rawDeveloper = new RawDeveloper(dataDirectory)
-    this.portraitRetoucher = new PortraitRetoucher(path.join(dataDirectory, "models"))
+    this.portraitRetoucher = new PortraitRetoucher(path.join(dataDirectory, "models"), process.env.SMARTSTUDIO_PYTHON ?? "python", true)
   }
 
   async initialize(): Promise<void> {
@@ -550,12 +550,22 @@ export class EditingService {
           height: null,
           backupStatus: "pending" as const,
           backupError: null,
+          backdropCompletion: portraitResult?.backdrop ?? "omitted",
+          matte: portraitResult?.matte ?? null,
+          matteConfiguration: completed.matteConfiguration,
+          backdropReason: portraitResult?.operations.backdrop.reason ?? null,
+          portraitWarnings: portraitResult?.warnings ?? [],
+          stageMilliseconds: portraitResult?.stageMilliseconds ?? completed.metrics.stages,
+          cleanPlateId: completed.cleanPlateId,
+          cleanPlateRelativePath: completed.cleanPlateRelativePath,
+          cleanPlateSha256: completed.cleanPlateSha256,
         }
         completed.versions.push(version)
         completed.currentVersionId = version.id
         completed.faceCount = portraitResult?.faces ?? 0
         completed.portraitWarnings = portraitResult?.warnings ?? []
         completed.backdropCompletion = portraitResult?.backdrop ?? "omitted"
+        completed.matte = portraitResult?.matte ?? null
         if (portraitResult) completed.retouchDecisions = portraitResult.operations
         completed.lensCorrectionApplied = lensCorrectionApplied
         completed.processDiagnostics.push(...processDiagnostics)
@@ -602,6 +612,11 @@ export class EditingService {
 
   private previewRelativePath(job: EditingJob, versionNumber = job.versions.length + 1): string {
     return path.join("events", job.eventId, "sessions", job.sessionId, "edits", `${job.id}-v${versionNumber}-preview.jpg`)
+  }
+
+  async close(): Promise<void> {
+    await this.waitForIdle()
+    await this.portraitRetoucher.close()
   }
 
   private masterRelativePath(job: EditingJob, versionNumber = job.versions.length + 1): string {
@@ -706,6 +721,7 @@ export class EditingService {
           .toFile(recipeAppliedPath)
         sourceImagePath = recipeAppliedPath
       }
+      const cleanPlateResolution = await this.resolveFrozenCleanPlate(job)
       const portraitResult = await this.portraitRetoucher.apply(
         sourceImagePath,
         portraitPath,
@@ -713,7 +729,14 @@ export class EditingService {
         capture.source === "simulated-folder" ? this.controlledPortraitFixture ?? { kind: "single" } : undefined,
         signal,
         onDiagnostic,
+        cleanPlateResolution.path,
+        job.matteConfiguration?.provider,
       )
+      if (cleanPlateResolution.warning) {
+        portraitResult.warnings.unshift(cleanPlateResolution.warning)
+        portraitResult.backdrop = "omitted"
+        portraitResult.operations.backdrop = { status: "omitted", reason: cleanPlateResolution.warning, regions: 0, omittedRegions: 1 }
+      }
       await sharp(portraitPath).toColourspace("rgb16").withIccProfile("srgb").tiff({ compression: "lzw" }).toFile(profiledPath)
       await this.validateMaster(profiledPath)
       await rename(profiledPath, destination)
@@ -752,6 +775,27 @@ export class EditingService {
     if (metadata.format !== "tiff" || metadata.channels !== 3 || metadata.depth !== "ushort" || (metadata.space !== "rgb16" && metadata.space !== "srgb") || !metadata.icc || !metadata.width || !metadata.height) {
       throw new Error("El máster no es un TIFF sRGB legible de tres canales y 16 bits.")
     }
+  }
+
+  private async resolveFrozenCleanPlate(job: EditingJob): Promise<{ path?: string; warning?: string }> {
+    if (!job.cleanPlateId && !job.cleanPlateRelativePath && !job.cleanPlateSha256) return {}
+    if (!job.cleanPlateId || !job.cleanPlateRelativePath || !job.cleanPlateSha256) {
+      return { path: path.join(this.dataDirectory, `.invalid-clean-plate-${job.id}`), warning: "La referencia fijada de la placa limpia está incompleta; se omitió únicamente el fondo." }
+    }
+    const event = this.store.snapshot().events.find((item) => item.id === job.eventId)
+    const plate = event?.cleanPlates.find((item) => item.id === job.cleanPlateId)
+    if (!plate || plate.relativePath !== job.cleanPlateRelativePath || plate.sha256 !== job.cleanPlateSha256) {
+      return { path: path.join(this.dataDirectory, `.invalid-clean-plate-${job.id}`), warning: "La placa fijada no pertenece a este evento o su referencia cambió; se omitió únicamente el fondo." }
+    }
+    const platePath = path.join(this.dataDirectory, plate.relativePath)
+    try {
+      if (await sha256File(platePath) !== job.cleanPlateSha256) {
+        return { path: path.join(this.dataDirectory, `.invalid-clean-plate-${job.id}`), warning: "El hash de la placa fijada ya no coincide; se omitió únicamente el fondo." }
+      }
+    } catch {
+      return { path: path.join(this.dataDirectory, `.invalid-clean-plate-${job.id}`), warning: "La placa fijada está ausente o no puede leerse; se omitió únicamente el fondo." }
+    }
+    return { path: platePath }
   }
 
   private async generateDelivery(jobId: string, versionId: string): Promise<WorkflowState> {

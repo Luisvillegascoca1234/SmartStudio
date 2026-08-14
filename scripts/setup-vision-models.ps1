@@ -15,6 +15,11 @@ function Get-ModelSha256([string]$Path) {
 }
 
 $projectDirectory = Split-Path -Parent $PSScriptRoot
+$requirements = Join-Path $projectDirectory "requirements-vision.txt"
+& python -m pip install --requirement $requirements
+if ($LASTEXITCODE -ne 0) {
+  throw "No se pudieron instalar las dependencias locales de visión."
+}
 $dataDirectory = if ($env:SMARTSTUDIO_DATA_DIR) {
   $env:SMARTSTUDIO_DATA_DIR
 } else {
@@ -35,6 +40,12 @@ $models = @(
     Uri = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite"
     MinimumBytes = 15000000
     Sha256 = "C6748B1253A99067EF71F7E26CA71096CD449BAEFA8F101900EA23016507E0E0"
+  },
+  @{
+    Name = "birefnet-general-lite.onnx"
+    Uri = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx"
+    MinimumBytes = 224005088
+    Sha256 = "5600024376F572A557870A5EB0AFB1E5961636BEF4E1E22132025467D0F03333"
   }
 )
 

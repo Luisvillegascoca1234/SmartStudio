@@ -70,6 +70,7 @@ export function App() {
   const [eventLocation, setEventLocation] = useState("")
   const [eventNotes, setEventNotes] = useState("")
   const [sessionLabel, setSessionLabel] = useState("")
+  const [cleanPlateFile, setCleanPlateFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connectionAttempt, setConnectionAttempt] = useState(0)
@@ -142,6 +143,23 @@ export function App() {
       const nextState = await postWorkflowTransition("/api/sessions", { label: sessionLabel })
       setSessionLabel("")
       return nextState
+    })
+  }
+
+  const registerCleanPlate = (event: FormEvent) => {
+    event.preventDefault()
+    if (!currentEvent || !cleanPlateFile) {
+      setError("Selecciona una fotografía limpia del fondo.")
+      return
+    }
+    const body = new FormData()
+    body.append("files", cleanPlateFile, cleanPlateFile.name)
+    void run(async () => {
+      const response = await fetch(`/api/events/${currentEvent.id}/clean-plates`, { method: "POST", body })
+      const result = (await response.json()) as WorkflowState | { error: string }
+      if (!response.ok) throw new Error("error" in result ? result.error : "No se pudo registrar la placa limpia.")
+      setCleanPlateFile(null)
+      return result as WorkflowState
     })
   }
 
@@ -339,6 +357,32 @@ export function App() {
 
                 {!currentSession && (
                   <>
+                    <ActionCard
+                      title="Fondo del miniestudio"
+                      copy={currentEvent.activeCleanPlateId
+                        ? "La placa limpia está validada y se usará automáticamente en nuevas fotografías."
+                        : "Registra una fotografía del fondo sin personas; sin ella se conservará el completado seguro actual."}
+                      icon={<ImageIcon />}
+                    >
+                      <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={registerCleanPlate}>
+                        <label className="grid gap-1 text-xs">
+                          Placa limpia
+                          <Input
+                            aria-label="Placa limpia"
+                            type="file"
+                            accept="image/jpeg,image/png,image/tiff"
+                            onChange={(event) => setCleanPlateFile(event.target.files?.[0] ?? null)}
+                            className="h-9 bg-background"
+                          />
+                        </label>
+                        <Button type="submit" disabled={busy || !cleanPlateFile}>Validar placa</Button>
+                        {currentEvent.activeCleanPlateId && (
+                          <Badge variant="secondary">
+                            Validada · {currentEvent.cleanPlates.length} {currentEvent.cleanPlates.length === 1 ? "versión" : "versiones"}
+                          </Badge>
+                        )}
+                      </form>
+                    </ActionCard>
                     <OperationalPanel
                       operations={operations}
                       busy={busy || operationsBusy}

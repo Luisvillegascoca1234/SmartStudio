@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { FastifyInstance } from "fastify"
@@ -16,6 +16,7 @@ type TestApplicationOptions = {
   editingDeliveryDelayMilliseconds?: number
   controlledPortraitFixture?: PortraitFixture
   simulatedCaptureProfile?: SimulationProfile
+  controlledCleanPlatePersonDetected?: boolean
 }
 
 export class TestApplication {
@@ -64,6 +65,10 @@ export class TestApplication {
     return readFile(path.join(this.dataDirectory, relativePath))
   }
 
+  async overwriteDataFile(relativePath: string, contents: Buffer): Promise<void> {
+    await writeFile(path.join(this.dataDirectory, relativePath), contents)
+  }
+
   async listDataFiles(): Promise<string[]> {
     const entries = await readdir(this.dataDirectory, { recursive: true, withFileTypes: true })
     return entries.filter((entry) => entry.isFile()).map((entry) => path.relative(this.dataDirectory, path.join(entry.parentPath, entry.name)))
@@ -78,6 +83,7 @@ export class TestApplication {
       editingDeliveryDelayMilliseconds: this.options.editingDeliveryDelayMilliseconds,
       controlledPortraitFixture: this.options.controlledPortraitFixture,
       simulatedCaptureProfile: this.options.simulatedCaptureProfile,
+      controlledCleanPlatePersonDetected: this.options.controlledCleanPlatePersonDetected,
     })
     this.address = await this.server.listen({ host: "127.0.0.1", port: 0 })
     this.context = await this.browser.newContext()

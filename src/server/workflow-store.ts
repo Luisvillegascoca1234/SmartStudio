@@ -64,6 +64,27 @@ const upgradeEvent = (event: UnknownRecord): Event => ({
   editingProfile: isRecord(event.editingProfile) && event.editingProfile.id === "polished-event"
     ? event.editingProfile as Event["editingProfile"]
     : polishedEventProfile(),
+  cleanPlates: Array.isArray(event.cleanPlates)
+    ? event.cleanPlates.filter(isRecord).filter((plate) =>
+        typeof plate.id === "string" &&
+        typeof plate.relativePath === "string" &&
+        typeof plate.sha256 === "string" &&
+        typeof plate.width === "number" &&
+        typeof plate.height === "number",
+      ).map((plate) => ({
+        id: plate.id as string,
+        relativePath: plate.relativePath as string,
+        sha256: plate.sha256 as string,
+        width: plate.width as number,
+        height: plate.height as number,
+        orientation: typeof plate.orientation === "number" ? plate.orientation : 1,
+        createdAt: typeof plate.createdAt === "string" ? plate.createdAt : new Date(0).toISOString(),
+        validatedAt: typeof plate.validatedAt === "string" ? plate.validatedAt : new Date(0).toISOString(),
+        validationMethod: plate.validationMethod === "local-mediapipe" ? "local-mediapipe" : "controlled-fixture",
+        supersedesId: typeof plate.supersedesId === "string" ? plate.supersedesId : null,
+      }))
+    : [],
+  activeCleanPlateId: typeof event.activeCleanPlateId === "string" ? event.activeCleanPlateId : null,
 })
 
 const upgradeEditingJobs = (value: unknown): EditingJob[] => {
@@ -98,6 +119,15 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
           iccProfile: typeof version.iccProfile === "string" ? version.iccProfile : null,
           backupStatus: new Set(["pending", "verified", "failed"]).has(String(version.backupStatus)) ? version.backupStatus : "pending",
           backupError: typeof version.backupError === "string" ? version.backupError : null,
+          backdropCompletion: isBackdropCompletion(version.backdropCompletion) ? version.backdropCompletion : "unchanged",
+          matte: isRecord(version.matte) ? version.matte as EditingJob["matte"] : null,
+          matteConfiguration: isRecord(version.matteConfiguration) ? version.matteConfiguration as EditingJob["matteConfiguration"] : null,
+          backdropReason: typeof version.backdropReason === "string" ? version.backdropReason : null,
+          portraitWarnings: Array.isArray(version.portraitWarnings) ? version.portraitWarnings.filter((item): item is string => typeof item === "string") : [],
+          stageMilliseconds: isRecord(version.stageMilliseconds) ? version.stageMilliseconds as EditingJob["metrics"]["stages"] : emptyRetouchStageMilliseconds(),
+          cleanPlateId: typeof version.cleanPlateId === "string" ? version.cleanPlateId : null,
+          cleanPlateRelativePath: typeof version.cleanPlateRelativePath === "string" ? version.cleanPlateRelativePath : null,
+          cleanPlateSha256: typeof version.cleanPlateSha256 === "string" ? version.cleanPlateSha256 : null,
         } as EditingJob["versions"][number]))
       : legacyPreview
         ? [{
@@ -109,6 +139,7 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
             approvalStatus: job.status === "approved" ? "approved" : "review", approvedAt: typeof job.approvedAt === "string" ? job.approvedAt : null,
             revokedAt: null, fullRelativePath: null, deliveryStatus: "not-requested", deliveryError: null, width: null, height: null,
             backupStatus: "pending", backupError: null,
+            backdropCompletion: "unchanged", matte: null, matteConfiguration: null, backdropReason: null, portraitWarnings: [], stageMilliseconds: emptyRetouchStageMilliseconds(), cleanPlateId: null, cleanPlateRelativePath: null, cleanPlateSha256: null,
           } as EditingJob["versions"][number]]
         : []
     return ({
@@ -144,6 +175,13 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
     faceCount: typeof job.faceCount === "number" ? job.faceCount : 0,
     portraitWarnings: Array.isArray(job.portraitWarnings) ? job.portraitWarnings.filter((item): item is string => typeof item === "string") : [],
     backdropCompletion: isBackdropCompletion(job.backdropCompletion) ? job.backdropCompletion : "unchanged",
+    matte: isRecord(job.matte) && (job.matte.provider === "controlled" || job.matte.provider === "mediapipe" || job.matte.provider === "birefnet")
+      ? job.matte as EditingJob["matte"]
+      : null,
+    matteConfiguration: isRecord(job.matteConfiguration) ? job.matteConfiguration as EditingJob["matteConfiguration"] : null,
+    cleanPlateId: typeof job.cleanPlateId === "string" ? job.cleanPlateId : null,
+    cleanPlateRelativePath: typeof job.cleanPlateRelativePath === "string" ? job.cleanPlateRelativePath : null,
+    cleanPlateSha256: typeof job.cleanPlateSha256 === "string" ? job.cleanPlateSha256 : null,
     eyeEnhancementEnabled: job.eyeEnhancementEnabled !== false,
     teethWhiteningEnabled: job.teethWhiteningEnabled !== false,
     processDiagnostics: Array.isArray(job.processDiagnostics)
@@ -172,9 +210,9 @@ const upgradeEditingJobs = (value: unknown): EditingJob[] => {
 
 const migrateState = (persisted: unknown): WorkflowState => {
   if (!isRecord(persisted)) return emptyWorkflowState()
-  if ((persisted.version === 3 || persisted.version === 4 || persisted.version === 5 || persisted.version === 6 || persisted.version === 7 || persisted.version === 8 || persisted.version === 9 || persisted.version === 10 || persisted.version === 11 || persisted.version === 12 || persisted.version === 13) && Array.isArray(persisted.events)) {
+  if ((persisted.version === 3 || persisted.version === 4 || persisted.version === 5 || persisted.version === 6 || persisted.version === 7 || persisted.version === 8 || persisted.version === 9 || persisted.version === 10 || persisted.version === 11 || persisted.version === 12 || persisted.version === 13 || persisted.version === 14 || persisted.version === 15) && Array.isArray(persisted.events)) {
     return {
-      version: 13,
+      version: 15,
       events: persisted.events.filter(isRecord).map(upgradeEvent),
       editingJobs: upgradeEditingJobs(persisted.editingJobs),
       activeEventId: typeof persisted.activeEventId === "string" ? persisted.activeEventId : null,
@@ -183,7 +221,7 @@ const migrateState = (persisted: unknown): WorkflowState => {
   }
   if (persisted.version === 2 && Array.isArray(persisted.events)) {
     return {
-      version: 13,
+      version: 15,
       events: persisted.events.filter(isRecord).map(upgradeEvent),
       editingJobs: [],
       activeEventId: typeof persisted.activeEventId === "string" ? persisted.activeEventId : null,
@@ -194,7 +232,7 @@ const migrateState = (persisted: unknown): WorkflowState => {
     const legacyEvent = persisted.event
     const legacySession = isRecord(legacyEvent.session) ? legacyEvent.session : null
     return {
-      version: 13,
+      version: 15,
       activeEventId: String(legacyEvent.id),
       savedAt: typeof persisted.savedAt === "string" ? persisted.savedAt : null,
       editingJobs: [],
@@ -236,7 +274,7 @@ export class WorkflowStore {
       const contents = await readFile(this.statePath, "utf8")
       const persisted = JSON.parse(contents) as unknown
       this.state = migrateState(persisted)
-      if (!isRecord(persisted) || persisted.version !== 12) await this.persist(this.state)
+      if (!isRecord(persisted) || persisted.version !== 15) await this.persist(this.state)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
     }
